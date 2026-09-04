@@ -2105,7 +2105,8 @@ void ChFi3d_Builder::PerformMoreThreeCorner(const int Jndex, const int nconges)
         Indices(nedge, ic, icplus, icmoins);
         if (sharp.Value(ic))
         {
-          BRepAdaptor_Curve C(TopoDS::Edge(Evive.Value(ic)));
+          const TopoDS_Edge anEdge = TopoDS::Edge(Evive.Value(ic));
+          BRepAdaptor_Curve C(anEdge);
           // to pass from 3D distance to a parametric distance
           if (!tangentregul(ic))
           {
@@ -2115,16 +2116,81 @@ void ChFi3d_Builder::PerformMoreThreeCorner(const int Jndex, const int nconges)
           {
             ec = 0.0;
           }
-          if (TopExp::FirstVertex(TopoDS::Edge(Evive.Value(ic))).IsSame(V1))
+          const bool isForward = TopExp::FirstVertex(anEdge).IsSame(V1);
+          if (isForward)
           {
             para = p.Value(ic, icmoins) + ec;
-            p.SetValue(ic, icmoins, para);
           }
           else
           {
             para = p.Value(ic, icmoins) - ec;
-            p.SetValue(ic, icmoins, para);
           }
+
+          // When a living edge bounds exactly one stripe, locate the corner endpoint from that
+          // stripe instead of advancing every edge by the same 3D distance.  A shared recoil is
+          // only a scale estimate: its parameter conversion produces unrelated endpoints on
+          // geometrically different curves (for example, a line and a circle).  The nearest point
+          // on the bounded edge gives the shortest local connector and is invariant to the edge's
+          // parameterization.  Keep the historical recoil when there is no unique adjacent stripe
+          // or when the projection collapses back to the original vertex.
+          const bool hasPreviousStripe = !sharp.Value(icmoins);
+          const bool hasNextStripe     = !sharp.Value(icplus);
+          if (hasPreviousStripe != hasNextStripe)
+          {
+            ChFiDS_CommonPoint adjacentPoint;
+            if (hasPreviousStripe)
+            {
+              isfirst       = (sens.Value(icmoins) == 1);
+              adjacentPoint = CD.Value(icmoins)
+                                ->SetOfSurfData()
+                                ->Value(i.Value(icmoins, ic))
+                                ->ChangeVertex(isfirst, jf.Value(icmoins));
+            }
+            else
+            {
+              isfirst       = (sens.Value(icplus) == 1);
+              jfp           = 3 - jf.Value(icplus);
+              adjacentPoint = CD.Value(icplus)
+                                ->SetOfSurfData()
+                                ->Value(i.Value(icplus, ic))
+                                ->ChangeVertex(isfirst, jfp);
+            }
+
+            Extrema_ExtPC projector(adjacentPoint.Point(), C);
+            if (projector.IsDone())
+            {
+              double bestParameter = C.FirstParameter();
+              double bestDistance  = adjacentPoint.Point().SquareDistance(C.Value(bestParameter));
+              const double lastDistance =
+                adjacentPoint.Point().SquareDistance(C.Value(C.LastParameter()));
+              if (lastDistance < bestDistance)
+              {
+                bestParameter = C.LastParameter();
+                bestDistance  = lastDistance;
+              }
+              for (int projectionIndex = 1; projectionIndex <= projector.NbExt(); ++projectionIndex)
+              {
+                if (projector.SquareDistance(projectionIndex) < bestDistance)
+                {
+                  bestParameter = projector.Point(projectionIndex).Parameter();
+                  bestDistance  = projector.SquareDistance(projectionIndex);
+                }
+              }
+
+              const gp_Pnt projectedPoint  = C.Value(bestParameter);
+              const gp_Pnt recoilPoint     = C.Value(para);
+              const double projectedTravel = projectedPoint.Distance(sommet);
+              const double recoilTravel    = recoilPoint.Distance(sommet);
+              const double recoilError     = adjacentPoint.Point().Distance(recoilPoint);
+              if (projectedTravel > Precision::Confusion()
+                  && projectedTravel <= recoilTravel + Precision::Confusion()
+                  && std::sqrt(bestDistance) + Precision::Confusion() < recoilError)
+              {
+                para = bestParameter;
+              }
+            }
+          }
+          p.SetValue(ic, icmoins, para);
           // it is necessary to be on to remain on the edge
           p.SetValue(ic, icplus, p.Value(ic, icmoins));
         }
