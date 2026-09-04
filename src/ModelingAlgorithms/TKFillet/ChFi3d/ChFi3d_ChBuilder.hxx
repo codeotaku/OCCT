@@ -52,6 +52,18 @@ public:
   //! computation of chamfers
   Standard_EXPORT ChFi3d_ChBuilder(const TopoDS_Shape& S, const double Ta = 1.0e-2);
 
+  //! Computes the chamfer and, for two-distance contours, retries the geometrically equivalent
+  //! opposite face ordering when the primary builder path returns an invalid result.
+  Standard_EXPORT void Compute();
+
+  //! Sets the approximation parameters used by both the primary and equivalent retry builders.
+  Standard_EXPORT void SetParams(const double Tang,
+                                 const double Tesp,
+                                 const double T2d,
+                                 const double TApp3d,
+                                 const double TolApp2d,
+                                 const double Fleche);
+
   //! initializes a contour with the edge <E> as first
   //! (the next are found by propagation ).
   //! The two distances (parameters of the chamfer) must
@@ -407,6 +419,9 @@ private:
                                   TopoDS_Face&                     F2) const;
 
   ChFiDS_ChamfMode myMode;
+  TopoDS_Shape     mySourceShape;
+  double           myAngularTolerance;
+  bool             myUsesAlternateTwoDistOrdering = false;
 };
 
 #endif // _ChFi3d_ChBuilder_HeaderFile

@@ -25,6 +25,7 @@
 #include <BRepBlend_ChAsymInv.hxx>
 #include <BRepBlend_Line.hxx>
 #include <BRepBlend_Walking.hxx>
+#include <BRepCheck_Analyzer.hxx>
 #include <BRepTools.hxx>
 #include <ChFi3d.hxx>
 #include <ChFi3d_Builder_0.hxx>
@@ -52,7 +53,9 @@
 #include <TopoDS_Vertex.hxx>
 #include <TopOpeBRepBuild_HBuilder.hxx>
 #include <TopOpeBRepDS_HDataStructure.hxx>
+#include <TopExp_Explorer.hxx>
 #include <memory>
+#include <vector>
 
 //=======================================================================
 // function : SearchCommonFaces
@@ -183,9 +186,252 @@ void ExtentSpineOnCommonFace(occ::handle<ChFiDS_Spine>& Spine1,
 //=================================================================================================
 
 ChFi3d_ChBuilder::ChFi3d_ChBuilder(const TopoDS_Shape& S, const double Ta)
-    : ChFi3d_Builder(S, Ta)
+    : ChFi3d_Builder(S, Ta),
+      mySourceShape(S),
+      myAngularTolerance(Ta)
 {
   myMode = ChFiDS_ClassicChamfer;
+}
+
+//=================================================================================================
+
+void ChFi3d_ChBuilder::SetParams(const double Tang,
+                                 const double Tesp,
+                                 const double T2d,
+                                 const double TApp3d,
+                                 const double TolApp2d,
+                                 const double Fleche)
+{
+  myAngularTolerance = Tang;
+  ChFi3d_Builder::SetParams(Tang, Tesp, T2d, TApp3d, TolApp2d, Fleche);
+}
+
+//=================================================================================================
+
+void ChFi3d_ChBuilder::Compute()
+{
+  struct ContourDefinition
+  {
+    ChFiDS_ChamfMethod                               Method;
+    TopoDS_Edge                                      Edge;
+    TopoDS_Face                                      FirstFace;
+    TopoDS_Face                                      AlternateFirstFace;
+    double                                           FirstDistance;
+    double                                           SecondDistance;
+    double                                           Angle;
+    bool                                             CanSwap;
+    std::vector<std::pair<TopoDS_Edge, TopoDS_Face>> FirstFaces;
+  };
+
+  std::vector<ContourDefinition> aDefinitions;
+  bool                           hasAlternate = false;
+  for (const occ::handle<ChFiDS_Stripe>& aStripe : myListStripe)
+  {
+    const occ::handle<ChFiDS_ChamfSpine> aSpine =
+      occ::down_cast<ChFiDS_ChamfSpine>(aStripe->Spine());
+    if (aSpine.IsNull() || aSpine->NbEdges() == 0)
+    {
+      continue;
+    }
+
+    ContourDefinition aDefinition = {aSpine->IsChamfer(),
+                                     aSpine->Edges(1),
+                                     TopoDS_Face(),
+                                     TopoDS_Face(),
+                                     0.0,
+                                     0.0,
+                                     0.0,
+                                     false,
+                                     {}};
+    if (aDefinition.Method == ChFiDS_Sym)
+    {
+      aSpine->GetDist(aDefinition.FirstDistance);
+    }
+    else if (aDefinition.Method == ChFiDS_TwoDist)
+    {
+      aSpine->Dists(aDefinition.FirstDistance, aDefinition.SecondDistance);
+    }
+    else
+    {
+      aSpine->GetDistAngle(aDefinition.FirstDistance, aDefinition.Angle);
+    }
+
+    bool canSwap = aDefinition.Method == ChFiDS_TwoDist;
+    for (int anEdgeIndex = 1; anEdgeIndex <= aSpine->NbEdges(); ++anEdgeIndex)
+    {
+      const TopoDS_Edge& anEdge = aSpine->Edges(anEdgeIndex);
+      if (!myEdgeFirstFace.IsBound(anEdge))
+      {
+        if (aDefinition.Method != ChFiDS_Sym)
+        {
+          canSwap = false;
+        }
+        continue;
+      }
+
+      TopoDS_Face aFirstFace;
+      TopoDS_Face aSecondFace;
+      SearchCommonFaces(myEFMap, anEdge, aFirstFace, aSecondFace);
+      const TopoDS_Face aCurrentFirst = TopoDS::Face(myEdgeFirstFace.Find(anEdge));
+      const TopoDS_Face anAlternateFirst =
+        aFirstFace.IsSame(aCurrentFirst) ? aSecondFace : aFirstFace;
+      aDefinition.FirstFaces.emplace_back(anEdge, aCurrentFirst);
+      if (anEdgeIndex == 1)
+      {
+        aDefinition.FirstFace          = aCurrentFirst;
+        aDefinition.AlternateFirstFace = anAlternateFirst;
+      }
+      if (aDefinition.Method == ChFiDS_TwoDist
+          && (anAlternateFirst.IsNull() || anAlternateFirst.IsSame(aCurrentFirst)))
+      {
+        canSwap = false;
+      }
+    }
+
+    if (canSwap)
+    {
+      hasAlternate = true;
+    }
+    aDefinition.CanSwap = canSwap;
+    aDefinitions.push_back(std::move(aDefinition));
+  }
+
+  const auto hasExpectedHistory = [&](ChFi3d_ChBuilder& theBuilder) {
+    if (!theBuilder.IsDone())
+    {
+      return false;
+    }
+    const TopoDS_Shape aResult = theBuilder.Shape();
+    for (const ContourDefinition& aDefinition : aDefinitions)
+    {
+      const NCollection_List<TopoDS_Shape>& aGenerated    = theBuilder.Generated(aDefinition.Edge);
+      bool                                  hasResultFace = false;
+      for (const TopoDS_Shape& aGeneratedShape : aGenerated)
+      {
+        for (TopExp_Explorer aFaceExp(aResult, TopAbs_FACE); aFaceExp.More(); aFaceExp.Next())
+        {
+          if (aFaceExp.Current().IsSame(aGeneratedShape))
+          {
+            hasResultFace = true;
+            break;
+          }
+        }
+        if (hasResultFace)
+        {
+          break;
+        }
+      }
+      if (!hasResultFace)
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  if (!myUsesAlternateTwoDistOrdering)
+  {
+    ChFi3d_Builder::Compute();
+    if (IsDone() && BRepCheck_Analyzer(Shape()).IsValid() && hasExpectedHistory(*this))
+    {
+      return;
+    }
+  }
+
+  const auto replayDefinitions = [&](ChFi3d_ChBuilder& theBuilder, const bool theUseAlternate) {
+    theBuilder.SetMode(myMode);
+    theBuilder.SetParams(myAngularTolerance, tolesp, tol2d, tolapp3d, tolapp2d, fleche);
+    theBuilder.SetContinuity(myConti, tolappangle);
+    for (const ContourDefinition& aDefinition : aDefinitions)
+    {
+      if (aDefinition.Method == ChFiDS_Sym)
+      {
+        theBuilder.Add(aDefinition.FirstDistance, aDefinition.Edge);
+      }
+      else if (aDefinition.Method == ChFiDS_TwoDist)
+      {
+        if (theUseAlternate && aDefinition.CanSwap)
+        {
+          theBuilder.Add(aDefinition.SecondDistance,
+                         aDefinition.FirstDistance,
+                         aDefinition.Edge,
+                         aDefinition.AlternateFirstFace);
+        }
+        else
+        {
+          theBuilder.Add(aDefinition.FirstDistance,
+                         aDefinition.SecondDistance,
+                         aDefinition.Edge,
+                         aDefinition.FirstFace);
+        }
+      }
+      else
+      {
+        theBuilder.AddDA(aDefinition.FirstDistance,
+                         aDefinition.Angle,
+                         aDefinition.Edge,
+                         aDefinition.FirstFace);
+      }
+    }
+  };
+
+  if (!hasAlternate)
+  {
+    if (myUsesAlternateTwoDistOrdering)
+    {
+      ChFi3d_ChBuilder aPrimaryBuilder(mySourceShape, myAngularTolerance);
+      replayDefinitions(aPrimaryBuilder, false);
+      if (aPrimaryBuilder.NbElements() == static_cast<int>(aDefinitions.size()))
+      {
+        aPrimaryBuilder.ChFi3d_Builder::Compute();
+      }
+      *this = aPrimaryBuilder;
+    }
+    return;
+  }
+
+  ChFi3d_ChBuilder anAlternateBuilder(mySourceShape, myAngularTolerance);
+  replayDefinitions(anAlternateBuilder, true);
+  if (anAlternateBuilder.NbElements() == static_cast<int>(aDefinitions.size()))
+  {
+    anAlternateBuilder.ChFi3d_Builder::Compute();
+  }
+  if (hasExpectedHistory(anAlternateBuilder)
+      && BRepCheck_Analyzer(anAlternateBuilder.Shape()).IsValid())
+  {
+    *this             = anAlternateBuilder;
+    int aContourIndex = 0;
+    for (const ContourDefinition& aDefinition : aDefinitions)
+    {
+      ++aContourIndex;
+      if (aDefinition.Method == ChFiDS_TwoDist)
+      {
+        const occ::handle<ChFiDS_ChamfSpine> aSpine =
+          occ::down_cast<ChFiDS_ChamfSpine>(Value(aContourIndex));
+        aSpine->SetDists(aDefinition.FirstDistance, aDefinition.SecondDistance);
+        for (const auto& anEdgeFace : aDefinition.FirstFaces)
+        {
+          if (myEdgeFirstFace.IsBound(anEdgeFace.first))
+          {
+            myEdgeFirstFace.ChangeFind(anEdgeFace.first) = anEdgeFace.second;
+          }
+        }
+      }
+    }
+    myUsesAlternateTwoDistOrdering = true;
+    return;
+  }
+
+  // When a previously selected alternate becomes invalid after editing a contour, rebuild the
+  // primary ordering from the caller-visible definitions instead of computing the hybrid internal
+  // state retained solely for query compatibility.
+  if (myUsesAlternateTwoDistOrdering)
+  {
+    ChFi3d_ChBuilder aPrimaryBuilder(mySourceShape, myAngularTolerance);
+    replayDefinitions(aPrimaryBuilder, false);
+    aPrimaryBuilder.ChFi3d_Builder::Compute();
+    *this = aPrimaryBuilder;
+  }
 }
 
 //=======================================================================
@@ -370,6 +616,38 @@ void ChFi3d_ChBuilder::SetDists(const double       Dis1,
   if (IC <= NbElements())
   {
     occ::handle<ChFiDS_ChamfSpine> csp = occ::down_cast<ChFiDS_ChamfSpine>(Value(IC));
+
+    // An equivalent-order retry keeps the caller's face ordering in myEdgeFirstFace while its
+    // internal spine was acquired from the opposite face.  Resolve edits against that preserved
+    // public ordering; using the internal acquisition parity would silently swap Dis1 and Dis2.
+    if (myUsesAlternateTwoDistOrdering && csp->IsChamfer() == ChFiDS_TwoDist)
+    {
+      for (int anEdgeIndex = 1; anEdgeIndex <= csp->NbEdges(); ++anEdgeIndex)
+      {
+        const TopoDS_Edge& anEdge = csp->Edges(anEdgeIndex);
+        TopoDS_Face        aFirstFace;
+        TopoDS_Face        aSecondFace;
+        SearchCommonFaces(myEFMap, anEdge, aFirstFace, aSecondFace);
+        if (!aFirstFace.IsSame(F) && !aSecondFace.IsSame(F))
+        {
+          continue;
+        }
+        if (!myEdgeFirstFace.IsBound(anEdge))
+        {
+          break;
+        }
+        if (myEdgeFirstFace.Find(anEdge).IsSame(F))
+        {
+          csp->SetDists(Dis1, Dis2);
+        }
+        else
+        {
+          csp->SetDists(Dis2, Dis1);
+        }
+        return;
+      }
+      throw Standard_DomainError("the face is not common to any of edges of the contour");
+    }
 
     // Search the first edge which has a common face equal to F
     TopoDS_Face         F1, F2, FirstF1, FirstF2;

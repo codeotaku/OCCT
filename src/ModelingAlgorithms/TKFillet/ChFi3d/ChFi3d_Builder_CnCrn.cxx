@@ -48,6 +48,7 @@
 #include <ChFi3d_Builder.hxx>
 #include <ChFi3d_Builder_0.hxx>
 #include <ChFi3d_CornerDecision.hxx>
+#include <ChFiDS_ChamfSpine.hxx>
 #include <ChFiDS_CommonPoint.hxx>
 #include <ChFiDS_FaceInterference.hxx>
 #include <ChFiDS_SurfData.hxx>
@@ -1381,6 +1382,21 @@ void ChFi3d_Builder::PerformMoreThreeCorner(const int Jndex, const int nconges)
   TopoDS_Face F1, F2;
   gp_Vec      SumFaceNormalAtV1(0, 0, 0); // is used to define Plate orientation
 
+  // The local endpoint projection below corrects the asymmetric construction of chamfer caps.
+  // Fillet stripes use the same generic corner routine but have different rolling-ball
+  // continuity constraints; changing their historical recoil path can disconnect an otherwise
+  // closed shell.  Determine the operation from the actual stripe types rather than from the
+  // surrounding topology so mixed geometric supports remain covered.
+  bool isChamferCorner = true;
+  for (It.Initialize(myVDataMap(Jndex)); It.More(); It.Next())
+  {
+    if (occ::down_cast<ChFiDS_ChamfSpine>(It.Value()->Spine()).IsNull())
+    {
+      isChamferCorner = false;
+      break;
+    }
+  }
+
   // it is determined if there is a sewing edge
   bool        couture = false;
   TopoDS_Face facecouture;
@@ -2202,7 +2218,7 @@ void ChFi3d_Builder::PerformMoreThreeCorner(const int Jndex, const int nconges)
           // or when the projection collapses back to the original vertex.
           const bool hasPreviousStripe = !sharp.Value(icmoins);
           const bool hasNextStripe     = !sharp.Value(icplus);
-          if (hasPreviousStripe != hasNextStripe)
+          if (isChamferCorner && hasPreviousStripe != hasNextStripe)
           {
             ChFiDS_CommonPoint adjacentPoint;
             if (hasPreviousStripe)
@@ -3181,7 +3197,7 @@ void ChFi3d_Builder::PerformMoreThreeCorner(const int Jndex, const int nconges)
           // boundary which is later hidden by very large vertex tolerances; the plate surface can
           // then fold far outside its boundary.  Reject a projection unless both of its endpoints
           // match the intended connector endpoints and let CalculBatten construct the local curve.
-          if (!raccordbatten && !pcurve.IsNull())
+          if (isChamferCorner && !raccordbatten && !pcurve.IsNull())
           {
             const gp_Pnt2d projectedFirst2d = pcurve->Value(pcurve->FirstParameter());
             const gp_Pnt2d projectedLast2d  = pcurve->Value(pcurve->LastParameter());
