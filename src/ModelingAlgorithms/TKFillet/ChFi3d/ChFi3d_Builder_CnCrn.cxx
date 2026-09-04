@@ -47,6 +47,7 @@
 #include <BRepTools.hxx>
 #include <ChFi3d_Builder.hxx>
 #include <ChFi3d_Builder_0.hxx>
+#include <ChFi3d_CornerDecision.hxx>
 #include <ChFiDS_CommonPoint.hxx>
 #include <ChFiDS_FaceInterference.hxx>
 #include <ChFiDS_SurfData.hxx>
@@ -114,6 +115,72 @@
 #include <TopTools_ShapeMapHasher.hxx>
 #include <NCollection_IndexedMap.hxx>
 #include <ChFi3d.hxx>
+
+#include <cmath>
+
+//=================================================================================================
+
+bool ChFi3d_ChooseProjectedRecoil(const BRepAdaptor_Curve& theCurve,
+                                  const gp_Pnt&            theAdjacentPoint,
+                                  const gp_Pnt&            theCornerPoint,
+                                  const double             theRecoilParameter,
+                                  double&                  theParameter)
+{
+  theParameter = theRecoilParameter;
+  Extrema_ExtPC aProjector(theAdjacentPoint, theCurve);
+  if (!aProjector.IsDone())
+  {
+    return false;
+  }
+
+  double       aBestParameter = theCurve.FirstParameter();
+  double       aBestDistance  = theAdjacentPoint.SquareDistance(theCurve.Value(aBestParameter));
+  const double aLastDistance =
+    theAdjacentPoint.SquareDistance(theCurve.Value(theCurve.LastParameter()));
+  if (aLastDistance < aBestDistance)
+  {
+    aBestParameter = theCurve.LastParameter();
+    aBestDistance  = aLastDistance;
+  }
+  for (int anIndex = 1; anIndex <= aProjector.NbExt(); ++anIndex)
+  {
+    if (aProjector.SquareDistance(anIndex) < aBestDistance)
+    {
+      aBestParameter = aProjector.Point(anIndex).Parameter();
+      aBestDistance  = aProjector.SquareDistance(anIndex);
+    }
+  }
+
+  const gp_Pnt aProjectedPoint  = theCurve.Value(aBestParameter);
+  const gp_Pnt aRecoilPoint     = theCurve.Value(theRecoilParameter);
+  const double aProjectedTravel = aProjectedPoint.Distance(theCornerPoint);
+  const double aRecoilTravel    = aRecoilPoint.Distance(theCornerPoint);
+  const double aRecoilError     = theAdjacentPoint.Distance(aRecoilPoint);
+  if (aProjectedTravel <= Precision::Confusion()
+      || aProjectedTravel > aRecoilTravel + Precision::Confusion()
+      || std::sqrt(aBestDistance) + Precision::Confusion() >= aRecoilError)
+  {
+    return false;
+  }
+
+  theParameter = aBestParameter;
+  return true;
+}
+
+//=================================================================================================
+
+bool ChFi3d_AreConnectorEndpointsMatching(const gp_Pnt& theProjectedFirst,
+                                          const gp_Pnt& theProjectedLast,
+                                          const gp_Pnt& theTargetFirst,
+                                          const gp_Pnt& theTargetLast,
+                                          const double  theTolerance)
+{
+  const bool isForward = theProjectedFirst.Distance(theTargetFirst) <= theTolerance
+                         && theProjectedLast.Distance(theTargetLast) <= theTolerance;
+  const bool isReverse = theProjectedFirst.Distance(theTargetLast) <= theTolerance
+                         && theProjectedLast.Distance(theTargetFirst) <= theTolerance;
+  return isForward || isReverse;
+}
 
 //=================================================================================================
 
@@ -2156,39 +2223,7 @@ void ChFi3d_Builder::PerformMoreThreeCorner(const int Jndex, const int nconges)
                                 ->ChangeVertex(isfirst, jfp);
             }
 
-            Extrema_ExtPC projector(adjacentPoint.Point(), C);
-            if (projector.IsDone())
-            {
-              double bestParameter = C.FirstParameter();
-              double bestDistance  = adjacentPoint.Point().SquareDistance(C.Value(bestParameter));
-              const double lastDistance =
-                adjacentPoint.Point().SquareDistance(C.Value(C.LastParameter()));
-              if (lastDistance < bestDistance)
-              {
-                bestParameter = C.LastParameter();
-                bestDistance  = lastDistance;
-              }
-              for (int projectionIndex = 1; projectionIndex <= projector.NbExt(); ++projectionIndex)
-              {
-                if (projector.SquareDistance(projectionIndex) < bestDistance)
-                {
-                  bestParameter = projector.Point(projectionIndex).Parameter();
-                  bestDistance  = projector.SquareDistance(projectionIndex);
-                }
-              }
-
-              const gp_Pnt projectedPoint  = C.Value(bestParameter);
-              const gp_Pnt recoilPoint     = C.Value(para);
-              const double projectedTravel = projectedPoint.Distance(sommet);
-              const double recoilTravel    = recoilPoint.Distance(sommet);
-              const double recoilError     = adjacentPoint.Point().Distance(recoilPoint);
-              if (projectedTravel > Precision::Confusion()
-                  && projectedTravel <= recoilTravel + Precision::Confusion()
-                  && std::sqrt(bestDistance) + Precision::Confusion() < recoilError)
-              {
-                para = bestParameter;
-              }
-            }
+            ChFi3d_ChooseProjectedRecoil(C, adjacentPoint.Point(), sommet, para, para);
           }
           p.SetValue(ic, icmoins, para);
           // it is necessary to be on to remain on the edge
@@ -3150,18 +3185,16 @@ void ChFi3d_Builder::PerformMoreThreeCorner(const int Jndex, const int nconges)
           {
             const gp_Pnt2d projectedFirst2d = pcurve->Value(pcurve->FirstParameter());
             const gp_Pnt2d projectedLast2d  = pcurve->Value(pcurve->LastParameter());
-            const gp_Pnt   projectedFirst =
-              Asurf->Value(projectedFirst2d.X(), projectedFirst2d.Y());
-            const gp_Pnt projectedLast = Asurf->Value(projectedLast2d.X(), projectedLast2d.Y());
-            const gp_Pnt targetFirst   = Asurf->Value(p2d1.X(), p2d1.Y());
-            const gp_Pnt targetLast    = Asurf->Value(p2d2.X(), p2d2.Y());
+            const gp_Pnt projectedFirst = Asurf->Value(projectedFirst2d.X(), projectedFirst2d.Y());
+            const gp_Pnt projectedLast  = Asurf->Value(projectedLast2d.X(), projectedLast2d.Y());
+            const gp_Pnt targetFirst    = Asurf->Value(p2d1.X(), p2d1.Y());
+            const gp_Pnt targetLast     = Asurf->Value(p2d2.X(), p2d2.Y());
             const double endpointTolerance = std::max(1.e-4, 10.0 * tolapp3d);
-            const bool   matchesForward =
-              projectedFirst.Distance(targetFirst) <= endpointTolerance
-              && projectedLast.Distance(targetLast) <= endpointTolerance;
-            const bool matchesReverse = projectedFirst.Distance(targetLast) <= endpointTolerance
-              && projectedLast.Distance(targetFirst) <= endpointTolerance;
-            if (!matchesForward && !matchesReverse)
+            if (!ChFi3d_AreConnectorEndpointsMatching(projectedFirst,
+                                                      projectedLast,
+                                                      targetFirst,
+                                                      targetLast,
+                                                      endpointTolerance))
             {
               raccordbatten = true;
               curveint.Nullify();
