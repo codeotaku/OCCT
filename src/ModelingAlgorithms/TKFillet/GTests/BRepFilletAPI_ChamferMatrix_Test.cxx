@@ -10,6 +10,7 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -611,6 +612,14 @@ TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricReferenceFaceSwapIsEquivalent)
     expectClosedValidSolid(aForward, anInput);
     expectClosedValidSolid(aReverse, anInput);
     EXPECT_NEAR(shapeVolume(aForward), shapeVolume(aReverse), shapeVolume(anInput) * 1.0e-8);
+    // Equal volume alone does not establish equivalent chamfer geometry. Use the existing
+    // Boolean facility to check that neither reference ordering leaves additional material.
+    BRepAlgoAPI_Cut aForwardOnly(aForward, aReverse);
+    BRepAlgoAPI_Cut aReverseOnly(aReverse, aForward);
+    ASSERT_TRUE(aForwardOnly.IsDone());
+    ASSERT_TRUE(aReverseOnly.IsDone());
+    EXPECT_NEAR(shapeVolume(aForwardOnly.Shape()), 0.0, shapeVolume(anInput) * 1.0e-8);
+    EXPECT_NEAR(shapeVolume(aReverseOnly.Shape()), 0.0, shapeVolume(anInput) * 1.0e-8);
   }
 }
 

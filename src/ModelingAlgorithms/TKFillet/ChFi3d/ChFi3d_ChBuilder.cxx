@@ -53,7 +53,8 @@
 #include <TopoDS_Vertex.hxx>
 #include <TopOpeBRepBuild_HBuilder.hxx>
 #include <TopOpeBRepDS_HDataStructure.hxx>
-#include <TopExp_Explorer.hxx>
+#include <TopExp.hxx>
+#include <NCollection_IndexedMap.hxx>
 #include <memory>
 #include <vector>
 
@@ -301,21 +302,15 @@ void ChFi3d_ChBuilder::Compute()
     {
       return false;
     }
-    const TopoDS_Shape aResult = theBuilder.Shape();
+    NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> aResultFaces;
+    TopExp::MapShapes(theBuilder.Shape(), TopAbs_FACE, aResultFaces);
     for (const ContourDefinition& aDefinition : aDefinitions)
     {
       const NCollection_List<TopoDS_Shape>& aGenerated    = theBuilder.Generated(aDefinition.Edge);
       bool                                  hasResultFace = false;
       for (const TopoDS_Shape& aGeneratedShape : aGenerated)
       {
-        for (TopExp_Explorer aFaceExp(aResult, TopAbs_FACE); aFaceExp.More(); aFaceExp.Next())
-        {
-          if (aFaceExp.Current().IsSame(aGeneratedShape))
-          {
-            hasResultFace = true;
-            break;
-          }
-        }
+        hasResultFace = aResultFaces.Contains(aGeneratedShape);
         if (hasResultFace)
         {
           break;
