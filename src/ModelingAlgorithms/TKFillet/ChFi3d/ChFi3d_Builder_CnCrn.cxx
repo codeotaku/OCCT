@@ -3075,6 +3075,32 @@ void ChFi3d_Builder::PerformMoreThreeCorner(const int Jndex, const int nconges)
             }
           }
           bool contraint1 = true, contraint2 = true;
+          // A projected connector may cover a different portion of the supporting face than
+          // the two corner points selected above.  Using such a curve creates an open geometric
+          // boundary which is later hidden by very large vertex tolerances; the plate surface can
+          // then fold far outside its boundary.  Reject a projection unless both of its endpoints
+          // match the intended connector endpoints and let CalculBatten construct the local curve.
+          if (!raccordbatten && !pcurve.IsNull())
+          {
+            const gp_Pnt2d projectedFirst2d = pcurve->Value(pcurve->FirstParameter());
+            const gp_Pnt2d projectedLast2d  = pcurve->Value(pcurve->LastParameter());
+            const gp_Pnt   projectedFirst =
+              Asurf->Value(projectedFirst2d.X(), projectedFirst2d.Y());
+            const gp_Pnt projectedLast = Asurf->Value(projectedLast2d.X(), projectedLast2d.Y());
+            const gp_Pnt targetFirst   = Asurf->Value(p2d1.X(), p2d1.Y());
+            const gp_Pnt targetLast    = Asurf->Value(p2d2.X(), p2d2.Y());
+            const double endpointTolerance = std::max(1.e-4, 10.0 * tolapp3d);
+            const bool   matchesForward =
+              projectedFirst.Distance(targetFirst) <= endpointTolerance
+              && projectedLast.Distance(targetLast) <= endpointTolerance;
+            const bool matchesReverse = projectedFirst.Distance(targetLast) <= endpointTolerance
+              && projectedLast.Distance(targetFirst) <= endpointTolerance;
+            if (!matchesForward && !matchesReverse)
+            {
+              raccordbatten = true;
+              curveint.Nullify();
+            }
+          }
           if (raccordbatten)
           {
             bool inverseic, inverseicplus;
