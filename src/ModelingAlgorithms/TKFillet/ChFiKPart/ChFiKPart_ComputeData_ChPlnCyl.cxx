@@ -237,6 +237,20 @@ bool ChFiKPart_MakeChamfer(TopOpeBRepDS_DataStructure&         DStr,
     gp_Circ2d cir2dPln(ax2dPln, Rad);
     GCir2dPln = new Geom2d_Circle(cir2dPln);
   }
+  else
+  {
+    // At the radius limit the planar contact is a point, not a pcurve.
+    // SplitKPart still needs its actual support coordinates for classification.
+    const gp_Pnt2d aUnused;
+    if (plandab)
+    {
+      Data->Set2dPoints(pt2dPln, pt2dPln, aUnused, aUnused);
+    }
+    else
+    {
+      Data->Set2dPoints(aUnused, aUnused, pt2dPln, pt2dPln);
+    }
+  }
 
   // pcurve on the chamfer
   gp_Pnt2d p2dch;
