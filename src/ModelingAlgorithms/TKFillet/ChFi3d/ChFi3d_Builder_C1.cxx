@@ -40,6 +40,9 @@
 #include <ElCLib.hxx>
 #include <Extrema_ExtCC.hxx>
 #include <Extrema_ExtPC.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
+#include <GeomLib_IsPlanarSurface.hxx>
 #include <Extrema_ExtPS.hxx>
 #include <Extrema_LocateExtCC.hxx>
 #include <Extrema_POnCurv.hxx>
@@ -1955,6 +1958,45 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
           compoint2 = true;
         }
       }
+      // A provisional walking patch with no support can be a planar
+      // continuation of the neighboring analytic chamfer. Preserve its end
+      // constraints on that existing surface instead of building a second cap.
+      if ((!compoint1 || !compoint2)
+          && (SeqFil(num)->IndexOfS1() == 0 || SeqFil(num)->IndexOfS2() == 0))
+      {
+        GeomAdaptor_Surface     aNeighbor(DStr.Surface(SeqFil(num1)->Surf()).Surface());
+        GeomLib_IsPlanarSurface aPlanar(DStr.Surface(SeqFil(num)->Surf()).Surface(), tolapp3d);
+        if (aNeighbor.GetType() == GeomAbs_Plane && aPlanar.IsPlanar()
+            && aNeighbor.Plane().Axis().Direction().IsParallel(aPlanar.Plan().Axis().Direction(),
+                                                               Precision::Angular())
+            && aNeighbor.Plane().Distance(aPlanar.Plan().Location()) <= tolapp3d)
+        {
+          double aParameters[2];
+          bool   canExtend = true;
+          for (int aSide = 1; aSide <= 2 && canExtend; ++aSide)
+          {
+            const auto& aPoint = SeqFil(num)->Vertex(isfirst, aSide);
+            const auto& aFi    = SeqFil(num1)->Interference(aSide);
+            canExtend          = aPoint.IsOnArc() && aFi.LineIndex() != 0;
+            if (!canExtend)
+              break;
+            GeomAPI_ProjectPointOnCurve aProjection(aPoint.Point(),
+                                                    DStr.Curve(aFi.LineIndex()).Curve());
+            canExtend = aProjection.NbPoints() > 0 && aProjection.LowerDistance() <= tolapp3d;
+            if (canExtend)
+              aParameters[aSide - 1] = aProjection.LowerDistanceParameter();
+          }
+          if (canExtend)
+          {
+            for (int aSide = 1; aSide <= 2; ++aSide)
+            {
+              SeqFil(num1)->ChangeVertex(isfirst, aSide) = SeqFil(num)->Vertex(isfirst, aSide);
+              SeqFil(num1)->ChangeInterference(aSide).SetParameter(aParameters[aSide - 1], isfirst);
+            }
+            compoint1 = compoint2 = true;
+          }
+        }
+      }
       if (compoint1 && compoint2)
       {
         SeqFil.Remove(num);
@@ -2710,7 +2752,12 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
       }
       else
       {
-        if (Hc1.IsNull())
+        if (Hc1.IsNull()
+            || Sfacemoins1
+                   ->Value(Hc1->Value(CV1.ParameterOnArc()).X(),
+                           Hc1->Value(CV1.ParameterOnArc()).Y())
+                   .SquareDistance(CV1.Point())
+                 > CV1.Tolerance() * CV1.Tolerance())
         {
           // curve 2d not found. Sfacemoins1 is extended and projection is done there
           // CV1.Point ()
@@ -2721,20 +2768,15 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
             BRep_Builder BRE;
             double       tol = BRep_Tool::Tolerance(F);
             BRE.MakeFace(faceprol[0], Sfacemoins1, F.Location(), tol);
-            if (!isOnSame1)
-            {
-              GeomAdaptor_Surface Asurf;
-              Asurf.Load(Sfacemoins1);
-              Extrema_ExtPS ext(CV1.Point(), Asurf, tol, tol, Extrema_ExtFlag_MIN);
-              double        uc1, vc1;
-              if (ext.IsDone())
-              {
-                ext.Point(1).Parameter(uc1, vc1);
-                pfac1.SetX(uc1);
-                pfac1.SetY(vc1);
-              }
-            }
           }
+          // Analytic supports need no extension, but still need the endpoint
+          // projected when this edge has no pcurve on the chosen support face.
+          GeomAPI_ProjectPointOnSurf aProjection(CV1.Point(), Sfacemoins1, BRep_Tool::Tolerance(F));
+          if (!aProjection.IsDone() || aProjection.NbPoints() == 0)
+            throw Standard_ConstructionError("Cannot project chamfer endpoint on support");
+          double aU, aV;
+          aProjection.LowerDistanceParameters(aU, aV);
+          pfac1.SetCoord(aU, aV);
         }
         else
         {
@@ -2948,7 +2990,11 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
     else
     {
       Hc2 = BRep_Tool::CurveOnSurface(E2, Face[nbface - 1], Ubid, Ubid);
-      if (Hc2.IsNull())
+      if (Hc2.IsNull()
+          || Sfacemoins1
+                 ->Value(Hc2->Value(CV2.ParameterOnArc()).X(), Hc2->Value(CV2.ParameterOnArc()).Y())
+                 .SquareDistance(CV2.Point())
+               > CV2.Tolerance() * CV2.Tolerance())
       {
         // curve 2d is not found,  Sfacemoins1 is extended CV2.Point() is projected there
 
@@ -2959,17 +3005,13 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
           extend     = true;
           double tol = BRep_Tool::Tolerance(F);
           BRE.MakeFace(faceprol[nb - 1], Sfacemoins1, F.Location(), tol);
-          GeomAdaptor_Surface Asurf;
-          Asurf.Load(Sfacemoins1);
-          Extrema_ExtPS ext(CV2.Point(), Asurf, tol, tol, Extrema_ExtFlag_MIN);
-          double        uc2, vc2;
-          if (ext.IsDone())
-          {
-            ext.Point(1).Parameter(uc2, vc2);
-            pfac2.SetX(uc2);
-            pfac2.SetY(vc2);
-          }
         }
+        GeomAPI_ProjectPointOnSurf aProjection(CV2.Point(), Sfacemoins1, BRep_Tool::Tolerance(F));
+        if (!aProjection.IsDone() || aProjection.NbPoints() == 0)
+          throw Standard_ConstructionError("Cannot project chamfer endpoint on support");
+        double aU, aV;
+        aProjection.LowerDistanceParameters(aU, aV);
+        pfac2.SetCoord(aU, aV);
       }
       else
       {
@@ -3105,6 +3147,9 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
     //       pfac1.SetX(xx1);
     //       pfac2.SetX(xx2);
     //     }
+
+    if (oneintersection1 || oneintersection2)
+      ChFi3d_Recale(Bs, pfac1, pfac2, oneintersection2);
 
     Pardeb(1) = pfil1.X();
     Pardeb(2) = pfil1.Y();
@@ -3315,7 +3360,7 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
       if (!extend && !(oneintersection1 || oneintersection2))
       {
         int Iarc2      = DStr.AddShape(Edge[nb]);
-        Interfedge[nb] = ChFi3d_FilPointInDS(ori, Iarc2, indpoint2, paredge2);
+        Interfedge[nb] = ChFi3d_FilPointInDS(ori, Iarc2, indpoint2, paredge2, Isvtx2);
         //  DStr.ChangeShapeInterferences(Edge[nb]).Append(Interfp2);
       }
       else
@@ -3369,6 +3414,7 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
         double        par1, par2, par, ParVtx;
         bool          vtx1 = false;
         bool          vtx2 = false;
+        bool          isIndVertex = Isvtx2;
         par1               = ext.Point(1).Parameter();
         ParVtx             = par1;
         if (oneintersection1 || oneintersection2)
@@ -3382,6 +3428,7 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
           {
             pext = CV1.Point();
             ind  = indpoint1;
+            isIndVertex = Isvtx1;
           }
           Extrema_ExtPC ext2(pext, cad, tolpt);
           par2 = ext2.Point(1).Parameter();
@@ -3391,9 +3438,27 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
           par2 = paredge2;
           ind  = indpoint2;
         }
+        if ((oneintersection1 || oneintersection2) && cad.IsPeriodic()
+            && !TopExp::FirstVertex(edgesau).IsSame(TopExp::LastVertex(edgesau)))
+        {
+          // The connector extends the restriction beyond its corner vertex.
+          // Projecting on a periodic basis curve loses that branch: extending
+          // its first endpoint must go below the edge range, not around the
+          // complementary arc through its last endpoint.
+          const double aPeriod = cad.Period();
+          par1                 = ElCLib::InPeriod(par1,
+                                                  ubid - Precision::PConfusion(),
+                                                  ubid + aPeriod - Precision::PConfusion());
+          if (TopExp::FirstVertex(edgesau).IsSame(Vtx))
+            par2 = ElCLib::InPeriod(par2, par1 - aPeriod, par1);
+          else if (TopExp::LastVertex(edgesau).IsSame(Vtx))
+            par2 = ElCLib::InPeriod(par2, par1, par1 + aPeriod);
+          ParVtx = par1;
+        }
         if (par1 > par2)
         {
           indp1 = ind;
+          vtx1  = isIndVertex;
           indp2 = DStr.AddShape(Vtx);
           vtx2  = true;
           par   = par1;
@@ -3404,6 +3469,7 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
         {
           indp1 = DStr.AddShape(Vtx);
           indp2 = ind;
+          vtx2  = isIndVertex;
           vtx1  = true;
         }
         occ::handle<Geom_Curve> Ct = new Geom_TrimmedCurve(csau, par1, par2);

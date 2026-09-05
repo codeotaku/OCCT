@@ -1268,7 +1268,7 @@ void TopOpeBRepDS_BuildTool::PCurve(TopoDS_Shape&                    F,
 
     if (!C.IsNull())
     {
-      if (rangedef && (CDS.IsExistingEdgeReversed() || CDS.IsEquivalentCurveReversed()))
+      if (rangedef && (CDS.IsExistingEdgeReversed() != CDS.IsEquivalentCurveReversed()))
       {
         occ::handle<Geom2d_TrimmedCurve> aReversedPCurve =
           new Geom2d_TrimmedCurve(PCT, CDSmin, CDSmax);
@@ -1280,6 +1280,10 @@ void TopOpeBRepDS_BuildTool::PCurve(TopoDS_Shape&                    F,
                            Cf,
                            Cl,
                            PCT);
+      }
+      else if (rangedef && !CDS.ExistingEdge().IsNull())
+      {
+        GeomLib::SameRange(Precision::PConfusion(), PCT, CDSmin, CDSmax, Cf, Cl, PCT);
       }
       else
       {
@@ -1309,7 +1313,12 @@ void TopOpeBRepDS_BuildTool::PCurve(TopoDS_Shape&                    F,
       }
     }
 
-    TopOpeBRepDS_SetThePCurve(myBuilder, EE, FF, E.Orientation(), PCT);
+    // A copied restriction already carries pcurves. Updating its non-seam
+    // representation must not add a second pcurve and turn it into a seam.
+    if (!CDS.ExistingEdge().IsNull() && !BRep_Tool::IsClosed(CDS.ExistingEdge(), FF))
+      myBuilder.UpdateEdge(EE, PCT, FF, Precision::Confusion());
+    else
+      TopOpeBRepDS_SetThePCurve(myBuilder, EE, FF, E.Orientation(), PCT);
   }
 }
 

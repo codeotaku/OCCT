@@ -15,6 +15,8 @@
 // commercial license or contractual agreement.
 
 #include <Standard_Integer.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp.hxx>
 #include <Geom2dAdaptor_Curve.hxx>
 #include <Geom2dInt_GInter.hxx>
 #include <IntRes2d_IntersectionSegment.hxx>
@@ -250,10 +252,22 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
   TopOpeBRepDS_CurveExplorer cex;
 
   NCollection_LinearVector<TopOpeBRepBuild_SurfaceCurve> aSurfaceCurves;
-  for (int aSurfaceIndex = 1; aSurfaceIndex <= HDS->NbSurfaces(); ++aSurfaceIndex)
+  const int                                              aNbSurfaces = HDS->NbSurfaces();
+  const int                                              aNbShapes   = HDS->NbShapes();
+  for (int aSurfaceIndex = 1; aSurfaceIndex <= aNbSurfaces + aNbShapes; ++aSurfaceIndex)
   {
     aSurfaceCurves.Clear();
-    for (TopOpeBRepDS_CurveIterator aCurveIt(HDS->SurfaceCurves(aSurfaceIndex)); aCurveIt.More();
+    TopoDS_Face aSupport;
+    if (aSurfaceIndex > aNbSurfaces)
+    {
+      const TopoDS_Shape& aShape = HDS->Shape(aSurfaceIndex - aNbSurfaces, false);
+      if (aShape.IsNull() || aShape.ShapeType() != TopAbs_FACE)
+        continue;
+      aSupport = TopoDS::Face(aShape);
+    }
+    for (TopOpeBRepDS_CurveIterator aCurveIt(aSupport.IsNull() ? HDS->SurfaceCurves(aSurfaceIndex)
+                                                               : HDS->FaceCurves(aSupport));
+         aCurveIt.More();
          aCurveIt.Next())
     {
       const occ::handle<Geom2d_Curve>& aPCurve = aCurveIt.PCurve();
@@ -270,6 +284,62 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
       }
     }
 
+    // Corner trimming can extend a previously partial limiting domain to a
+    // complete restriction. Recheck on the original support after all corners
+    // have been built, using the same coincidence test as generated curves.
+    if (!aSupport.IsNull())
+    {
+      for (const TopOpeBRepBuild_SurfaceCurve& aCurve : aSurfaceCurves)
+      {
+        if (!BDS.Curve(aCurve.Index).ExistingEdge().IsNull())
+          continue;
+        Geom2dAdaptor_Curve aNewCurve(aCurve.PCurve, aCurve.FirstParameter, aCurve.LastParameter);
+        for (TopExp_Explorer anIt(aSupport, TopAbs_EDGE); anIt.More(); anIt.Next())
+        {
+          const TopoDS_Edge anEdge = TopoDS::Edge(anIt.Current());
+          if (BRep_Tool::Degenerated(anEdge))
+            continue;
+          double                          aFirst, aLast;
+          const occ::handle<Geom2d_Curve> aPCurve =
+            BRep_Tool::CurveOnSurface(anEdge, aSupport, aFirst, aLast);
+          if (aPCurve.IsNull())
+            continue;
+          Geom2dAdaptor_Curve aRestriction(aPCurve, aFirst, aLast);
+          Geom2dInt_GInter    anIntersector(aNewCurve,
+                                            aRestriction,
+                                            Precision::PConfusion(),
+                                            Precision::PConfusion());
+          bool                isReversed = false;
+          if (TopOpeBRepBuild_HasCompleteCoincidence(anIntersector,
+                                                     aNewCurve,
+                                                     aRestriction,
+                                                     isReversed))
+          {
+            BDS.ChangeCurve(aCurve.Index).SetExistingEdge(anEdge, isReversed);
+            BDS.ChangeCurve(aCurve.Index).SetRange(aCurve.FirstParameter, aCurve.LastParameter);
+            for (int anEnd = 0; anEnd < 2; ++anEnd)
+            {
+              int  aGeometryIndex = 0;
+              bool isPoint        = false;
+              if (TopOpeBRepBuild_FindCurveEnd(HDS,
+                                               aCurve.Index,
+                                               anEnd == 0,
+                                               aGeometryIndex,
+                                               isPoint)
+                  && isPoint)
+              {
+                const bool isFirst = (anEnd == 0) != isReversed;
+                ChangeNewVertex(aGeometryIndex) =
+                  isFirst ? TopExp::FirstVertex(anEdge) : TopExp::LastVertex(anEdge);
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // Opposing chamfers also meet on an original support face.
     for (size_t aFirstIndex = 0; aFirstIndex < aSurfaceCurves.Size(); ++aFirstIndex)
     {
       for (size_t aSecondIndex = aFirstIndex + 1; aSecondIndex < aSurfaceCurves.Size();

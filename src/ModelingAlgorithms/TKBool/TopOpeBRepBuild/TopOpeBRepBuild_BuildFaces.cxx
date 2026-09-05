@@ -108,7 +108,7 @@ void TopOpeBRepBuild_Builder::BuildFaces(const int                              
       }
       // modified by NIZNHY-PKV Mon Dec 13 10:09:43 2010f
       TopAbs_Orientation ori = SCurves.Orientation(TopAbs_IN);
-      if (CDS.IsEquivalentCurveReversed())
+      if (CDS.IsEquivalentCurveReversed() != CDS.IsExistingEdgeReversed())
       {
         ori = TopAbs::Reverse(ori);
       }

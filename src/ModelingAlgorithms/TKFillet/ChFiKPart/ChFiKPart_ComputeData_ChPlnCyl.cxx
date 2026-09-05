@@ -28,6 +28,7 @@
 #include <Geom_CylindricalSurface.hxx>
 #include <Geom_Line.hxx>
 #include <Geom_Plane.hxx>
+#include <Standard_ConstructionError.hxx>
 #include <gp.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
@@ -149,13 +150,14 @@ bool ChFiKPart_MakeChamfer(TopOpeBRepDS_DataStructure&         DStr,
     if (std::abs(Rad) <= Precision::Confusion())
     {
       pointu = true;
+      Rad    = 0.0;
     }
     if (Rad < 0)
     {
 #ifdef OCCT_DEBUG
       std::cout << "the chamfer can't pass" << std::endl;
 #endif
-      return false;
+      throw Standard_ConstructionError("Chamfer distance exceeds cylinder radius");
     }
   }
   else

@@ -3351,6 +3351,13 @@ bool ChFi3d_HasTransversalIntersection(const Geom2dInt_GInter& theIntersector)
     const IntRes2d_IntersectionPoint& aPoint      = theIntersector.Point(anIndex);
     const IntRes2d_TypeTrans          aFirstType  = aPoint.TransitionOfFirst().TransitionType();
     const IntRes2d_TypeTrans          aSecondType = aPoint.TransitionOfSecond().TransitionType();
+    if (aPoint.TransitionOfFirst().PositionOnCurve() != IntRes2d_Middle
+        && aPoint.TransitionOfSecond().PositionOnCurve() != IntRes2d_Middle)
+    {
+      // Two bounded curves meeting at their endpoints do not cross in their
+      // interiors, even when their tangents form a nonzero angle.
+      continue;
+    }
     if (aFirstType == IntRes2d_In || aFirstType == IntRes2d_Out || aSecondType == IntRes2d_In
         || aSecondType == IntRes2d_Out)
     {

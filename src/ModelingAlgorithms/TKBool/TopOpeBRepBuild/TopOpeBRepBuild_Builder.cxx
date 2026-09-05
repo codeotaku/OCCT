@@ -15,6 +15,7 @@
 // commercial license or contractual agreement.
 
 #include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepTools_ReShape.hxx>
 #include <Geom_Curve.hxx>
 #include <gp_Pnt.hxx>
 #include <Precision.hxx>
@@ -83,43 +84,25 @@ Standard_EXPORT void debspf(const int i)
 
 static TopoDS_Shape SubstituteCoincidentEdges(
   const TopoDS_Shape&                                                             theShape,
-  const NCollection_DataMap<TopoDS_Shape, TopoDS_Shape, TopTools_ShapeMapHasher>& theEdges,
-  const TopOpeBRepDS_BuildTool&                                                   theBuildTool)
+  const NCollection_DataMap<TopoDS_Shape, TopoDS_Shape, TopTools_ShapeMapHasher>& theEdges)
 {
   if (theShape.ShapeType() != TopAbs_FACE && theShape.ShapeType() != TopAbs_WIRE)
   {
     return theShape;
   }
 
-  TopoDS_Shape aCopy      = theShape.EmptyCopied();
-  bool         isModified = false;
-  for (TopoDS_Iterator anIt(theShape, false, false); anIt.More(); anIt.Next())
+  // The map contains located edges. ReShape accumulates parent locations while
+  // traversing wires, unlike a local-coordinate iterator, and preserves edge use
+  // orientations while rebuilding only affected ancestors.
+  BRepTools_ReShape aReShape;
+  for (NCollection_DataMap<TopoDS_Shape, TopoDS_Shape, TopTools_ShapeMapHasher>::Iterator anIt(
+         theEdges);
+       anIt.More();
+       anIt.Next())
   {
-    TopoDS_Shape aSubShape = anIt.Value();
-    if (aSubShape.ShapeType() == TopAbs_EDGE && theEdges.IsBound(aSubShape))
-    {
-      const TopAbs_Orientation anOrientation = aSubShape.Orientation();
-      aSubShape                              = theEdges(aSubShape);
-      aSubShape.Orientation(anOrientation);
-      isModified = true;
-    }
-    else if (aSubShape.ShapeType() == TopAbs_WIRE)
-    {
-      TopoDS_Shape aNewWire = SubstituteCoincidentEdges(aSubShape, theEdges, theBuildTool);
-      isModified            = isModified || !aNewWire.IsSame(aSubShape);
-      aSubShape             = aNewWire;
-    }
-
-    if (theShape.ShapeType() == TopAbs_FACE)
-    {
-      theBuildTool.AddFaceWire(aCopy, aSubShape);
-    }
-    else
-    {
-      theBuildTool.AddWireEdge(aCopy, aSubShape);
-    }
+    aReShape.Replace(anIt.Key().Oriented(TopAbs_FORWARD), anIt.Value().Oriented(TopAbs_FORWARD));
   }
-  return isModified ? aCopy : theShape;
+  return aReShape.Apply(theShape, TopAbs_EDGE);
 }
 
 //=================================================================================================
@@ -361,7 +344,8 @@ void TopOpeBRepBuild_Builder::AddIntersectionEdges(TopoDS_Shape&             aFa
       }
       TopAbs_Orientation ori    = FCurves.Orientation(ToBuild1);
       TopAbs_Orientation newori = Orient(ori, RevOri1);
-      if (myDataStructure->Curve(iC).IsEquivalentCurveReversed())
+      if (myDataStructure->Curve(iC).IsEquivalentCurveReversed()
+          != myDataStructure->Curve(iC).IsExistingEdgeReversed())
       {
         newori = TopAbs::Reverse(newori);
       }
@@ -1769,6 +1753,7 @@ void TopOpeBRepBuild_Builder::SplitSolid(const TopoDS_Shape& S1oriented,
 
   // Add the intersection surfaces
   // -----------------------------
+  const bool needsStartFace = SFS.StartElements().IsEmpty();
   if (myDataStructure->NbSurfaces() > 0)
   {
     TopOpeBRepDS_SurfaceIterator SSurfaces = myDataStructure->SolidSurfaces(S1forward);
@@ -1782,7 +1767,12 @@ void TopOpeBRepBuild_Builder::SplitSolid(const TopoDS_Shape& S1oriented,
         TopAbs_Orientation ori   = SSurfaces.Orientation(ToBuild1);
         myBuildTool.Orientation(aFace, ori);
 
-        SFS.AddElement(aFace);
+        // A limiting operation can consume every split source face. Generated
+        // faces must also seed reconstruction when no source start face remains.
+        if (needsStartFace)
+          SFS.AddStartElement(aFace);
+        else
+          SFS.AddElement(aFace);
       }
     }
   }
@@ -1855,13 +1845,41 @@ void TopOpeBRepBuild_Builder::SplitShapes(TopOpeBRepTool_ShapeExplorer& Ex,
   for (; Ex.More(); Ex.Next())
   {
     aShape = Ex.Current();
-    const bool isConsumedFaceEdge =
+    bool isConsumedFaceEdge =
       aShape.ShapeType() == TopAbs_EDGE && myConsumedFaceEdges.IsBound(aShape);
 
     // compute new orientation <newori> to give to the new shapes
     newori = Orient(myBuildTool.Orientation(aShape), RevOri);
 
+    if (aShape.ShapeType() == TopAbs_EDGE)
+    {
+      const auto* aWireSet = dynamic_cast<const TopOpeBRepBuild_WireEdgeSet*>(&aSet);
+      if (aWireSet != nullptr)
+      {
+        for (TopOpeBRepDS_CurveIterator aCurveIt(myDataStructure->FaceCurves(aWireSet->Face()));
+             aCurveIt.More();
+             aCurveIt.Next())
+        {
+          const TopOpeBRepDS_Curve& aCurve = myDataStructure->Curve(aCurveIt.Current());
+          if (aCurve.ExistingEdge().IsNull() || !aCurve.ExistingEdge().IsSame(aShape))
+            continue;
+          TopAbs_Orientation anOrientation = Orient(aCurveIt.Orientation(ToBuild1), RevOri);
+          if (aCurve.IsEquivalentCurveReversed() != aCurve.IsExistingEdgeReversed())
+            anOrientation = TopAbs::Reverse(anOrientation);
+          if ((newori == TopAbs_FORWARD || newori == TopAbs_REVERSED)
+              && anOrientation == TopAbs::Reverse(newori))
+            isConsumedFaceEdge = true;
+        }
+      }
+    }
+
     TopAbs_ShapeEnum t = aShape.ShapeType();
+    if (t == TopAbs_EDGE && myCoincidentEdges.IsBound(aShape))
+    {
+      if (!isConsumedFaceEdge)
+        aSet.AddStartElement(myCoincidentEdges(aShape).Oriented(newori));
+      continue;
+    }
 
     if (t == TopAbs_SOLID || t == TopAbs_SHELL)
     {
@@ -1907,7 +1925,7 @@ void TopOpeBRepBuild_Builder::SplitShapes(TopOpeBRepTool_ShapeExplorer& Ex,
           continue;
         }
         newShape = It.Value();
-        newShape = SubstituteCoincidentEdges(newShape, myCoincidentEdges, myBuildTool);
+        newShape = SubstituteCoincidentEdges(newShape, myCoincidentEdges);
         myBuildTool.Orientation(newShape, newori);
 #ifdef OCCT_DEBUG
 //	TopAbs_ShapeEnum tns = TopType(newShape);
@@ -2002,7 +2020,7 @@ void TopOpeBRepBuild_Builder::SplitShapes(TopOpeBRepTool_ShapeExplorer& Ex,
       }
       if (add && !isConsumedFaceEdge)
       {
-        aShape = SubstituteCoincidentEdges(aShape, myCoincidentEdges, myBuildTool);
+        aShape = SubstituteCoincidentEdges(aShape, myCoincidentEdges);
         myBuildTool.Orientation(aShape, newori);
         aSet.AddElement(aShape);
       }
@@ -2073,7 +2091,7 @@ void TopOpeBRepBuild_Builder::FillShape(const TopoDS_Shape&                   S1
       if (keep)
       {
         newori    = Orient(myBuildTool.Orientation(aSubShape), RevOri);
-        aSubShape = SubstituteCoincidentEdges(aSubShape, myCoincidentEdges, myBuildTool);
+        aSubShape = SubstituteCoincidentEdges(aSubShape, myCoincidentEdges);
         myBuildTool.Orientation(aSubShape, newori);
         aSet.AddShape(aSubShape);
       }

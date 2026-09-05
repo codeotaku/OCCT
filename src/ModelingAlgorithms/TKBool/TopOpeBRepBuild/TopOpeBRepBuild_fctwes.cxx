@@ -199,7 +199,8 @@ void TopOpeBRepBuild_Builder::GFillCurveTopologyWES(const TopOpeBRepDS_CurveIter
   }
 
   int iG = FCit.Current();
-  if (myDataStructure->Curve(iG).IsEquivalentCurveReversed())
+  if (myDataStructure->Curve(iG).IsEquivalentCurveReversed()
+      != myDataStructure->Curve(iG).IsExistingEdgeReversed())
   {
     neworiE = TopAbs::Reverse(neworiE);
   }
