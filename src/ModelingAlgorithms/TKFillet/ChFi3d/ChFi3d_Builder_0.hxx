@@ -79,7 +79,10 @@ void ChFi3d_Boite(const gp_Pnt2d& p1,
                   double&         mv,
                   double&         Mv);
 
-void ChFi3d_SetPointTolerance(TopOpeBRepDS_DataStructure& DStr, const Bnd_Box& box, const int IP);
+void ChFi3d_SetPointTolerance(TopOpeBRepDS_DataStructure& DStr,
+                              const Bnd_Box&              box,
+                              const int                   IP,
+                              const bool                  theIsVertex = false);
 
 void ChFi3d_EnlargeBox(const occ::handle<Geom_Curve>& C,
                        const double                   wd,
@@ -301,7 +304,8 @@ bool ChFi3d_IntTraces(const occ::handle<ChFiDS_SurfData>& fd1,
                       const int                           sens2,
                       const gp_Pnt2d&                     RefP2d,
                       const bool                          Check2dDistance = false,
-                      const bool                          enlarge         = false);
+                      const bool                          enlarge         = false,
+                      const TopoDS_Face*                  theSupport      = nullptr);
 
 bool ChFi3d_IsInFront(TopOpeBRepDS_DataStructure&       DStr,
                       const occ::handle<ChFiDS_Stripe>& cd1,

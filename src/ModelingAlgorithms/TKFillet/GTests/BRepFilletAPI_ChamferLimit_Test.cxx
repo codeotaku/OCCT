@@ -8,6 +8,7 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Check.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -323,4 +324,123 @@ INSTANTIATE_TEST_SUITE_P(Boundary,
                          ChamferLimitNeighborhood,
                          testing::Combine(testing::Values(0, 2, 4, 5, 7, 8),
                                           testing::Range(0, 3),
+                                          testing::Bool()));
+
+class ChamferSequentialLimit : public testing::TestWithParam<std::tuple<int, int, int, bool, bool>>
+{
+};
+
+TEST_P(ChamferSequentialLimit, ConsumeLowerContourAfterUpperChamfer)
+{
+  const auto [aKind, aState, aScaleIndex, isLocated, isReversed] = GetParam();
+  TopoDS_Shape              aSource = makeLimitSource(aKind == 0 ? 2 : 8);
+  BRepFilletAPI_MakeChamfer anUpper(aSource);
+  anUpper.Add(10.0, findTopEdge(aSource, aKind == 0 ? 2 : 8));
+  anUpper.Build();
+  ASSERT_TRUE(anUpper.IsDone());
+  ShapeUpgrade_UnifySameDomain anUpperUnify(anUpper.Shape(), true, true, true);
+  anUpperUnify.Build();
+  aSource = anUpperUnify.Shape();
+  if (aKind == 2)
+  {
+    TopoDS_Edge aTop;
+    for (TopExp_Explorer anIt(aSource, TopAbs_EDGE); anIt.More(); anIt.Next())
+    {
+      BRepAdaptor_Curve aCurve(TopoDS::Edge(anIt.Current()));
+      if (aCurve.GetType() == GeomAbs_Circle
+          && std::abs(aCurve.Value(aCurve.FirstParameter()).Z() - 20.0) < 1.e-7)
+      {
+        aTop = TopoDS::Edge(anIt.Current());
+        break;
+      }
+    }
+    ASSERT_FALSE(aTop.IsNull());
+    BRepFilletAPI_MakeChamfer aCap(aSource);
+    aCap.Add(10.0, aTop);
+    aCap.Build();
+    ASSERT_TRUE(aCap.IsDone());
+    ShapeUpgrade_UnifySameDomain aCapUnify(aCap.Shape(), true, true, true);
+    aCapUnify.Build();
+    aSource = aCapUnify.Shape();
+  }
+  ASSERT_TRUE(BRepCheck_Analyzer(aSource, true, false, true).IsValid());
+  TopoDS_Edge aRail, anArc;
+  for (TopExp_Explorer anIt(aSource, TopAbs_EDGE); anIt.More(); anIt.Next())
+  {
+    BRepAdaptor_Curve aCurve(TopoDS::Edge(anIt.Current()));
+    const gp_Pnt      aMid = aCurve.Value((aCurve.FirstParameter() + aCurve.LastParameter()) * 0.5);
+    if (std::abs(aMid.Z()) > 1.e-7)
+      continue;
+    if (aCurve.GetType() == GeomAbs_Line && std::abs(aMid.Y() - 10.0) < 1.e-7)
+      aRail = TopoDS::Edge(anIt.Current());
+    if (aCurve.GetType() == GeomAbs_Circle && aMid.X() < -1.0)
+      anArc = TopoDS::Edge(anIt.Current());
+  }
+  ASSERT_FALSE(aRail.IsNull());
+  ASSERT_FALSE(anArc.IsNull());
+  const double aScale = aScaleIndex == 0 ? 1.0 : (aScaleIndex == 1 ? 0.1 : 10.0);
+  gp_Trsf      aScaleTransform;
+  aScaleTransform.SetScale(gp_Pnt(), aScale);
+  BRepBuilderAPI_Transform aScaled(aSource, aScaleTransform, true);
+  aRail   = TopoDS::Edge(aScaled.ModifiedShape(aRail));
+  anArc   = TopoDS::Edge(aScaled.ModifiedShape(anArc));
+  aSource = aScaled.Shape();
+  if (isLocated)
+  {
+    gp_Trsf aTransform;
+    aTransform.SetRotation(gp_Ax1(gp_Pnt(), gp_Dir(1, 2, 3)), 0.71);
+    aTransform.SetTranslationPart(gp_Vec(17, -23, 31));
+    TopLoc_Location aLocation(aTransform);
+    aSource.Move(aLocation);
+    aRail.Move(aLocation);
+    anArc.Move(aLocation);
+  }
+  const double aDistance = (10.0 + (aState - 1) * 0.01) * aScale;
+  ASSERT_TRUE(BRepCheck_Analyzer(aSource, true, false, true).IsValid());
+  ASSERT_TRUE(BRepAlgoAPI_Check(aSource).IsValid());
+  BRepFilletAPI_MakeChamfer aLower(aSource);
+  aLower.Add(aDistance, isReversed ? anArc : aRail);
+  aLower.Add(aDistance, isReversed ? aRail : anArc);
+  std::string aStem;
+  if (const char* aDirectory = std::getenv("CHAMFER_LIMIT_OUTPUT"))
+  {
+    aStem = std::string(aDirectory) + "/sequential-" + std::to_string(aKind) + "-"
+            + std::to_string(aState) + "-" + std::to_string(aScaleIndex) + "-"
+            + std::to_string(isLocated) + "-" + std::to_string(isReversed);
+    BRepTools::Write(aSource, (aStem + "-source.brep").c_str());
+  }
+  ASSERT_NO_THROW(aLower.Build());
+  if (!aStem.empty() && aLower.IsDone())
+    BRepTools::Write(aLower.Shape(), (aStem + "-result.brep").c_str());
+  EXPECT_TRUE(BRepCheck_Analyzer(aSource, true, false, true).IsValid());
+  if (aState == 2 && aKind != 0)
+  {
+    EXPECT_FALSE(aLower.IsDone());
+    return;
+  }
+  // The plain arm has no remaining cylindrical side: consuming its bottom
+  // face need not be the final admissible distance. Any accepted continuation
+  // must nevertheless remain a valid material-removing solid.
+  if (aState == 2 && !aLower.IsDone())
+    return;
+  ASSERT_TRUE(aLower.IsDone());
+  expectClosedManifold(aLower.Shape());
+  EXPECT_TRUE(BRepAlgoAPI_Check(aLower.Shape()).IsValid());
+  for (TopExp_Explorer anIt(aLower.Shape(), TopAbs_VERTEX); anIt.More(); anIt.Next())
+    EXPECT_LT(BRep_Tool::Tolerance(TopoDS::Vertex(anIt.Current())), 1.e-3 * aScale);
+  for (TopExp_Explorer anIt(aLower.Shape(), TopAbs_EDGE); anIt.More(); anIt.Next())
+    EXPECT_LT(BRep_Tool::Tolerance(TopoDS::Edge(anIt.Current())), 1.e-3 * aScale);
+  GProp_GProps aBefore, anAfter;
+  BRepGProp::VolumeProperties(aSource, aBefore);
+  BRepGProp::VolumeProperties(aLower.Shape(), anAfter);
+  EXPECT_GT(anAfter.Mass(), 0.0);
+  EXPECT_LT(anAfter.Mass(), aBefore.Mass());
+}
+
+INSTANTIATE_TEST_SUITE_P(Sequential,
+                         ChamferSequentialLimit,
+                         testing::Combine(testing::Range(0, 3),
+                                          testing::Range(0, 3),
+                                          testing::Range(0, 3),
+                                          testing::Bool(),
                                           testing::Bool()));

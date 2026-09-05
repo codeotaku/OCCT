@@ -463,12 +463,15 @@ static bool IsInput(const gp_Vec& Vec, const TopoDS_Vertex& Ve, const TopoDS_Fac
   gp_Ax3  Axe(Point, Normal, Vec3d[0]);
   gp_Trsf Transf;
   Transf.SetTransformation(Axe);
-  gp_XYZ coord = Vec.XYZ();
-  Transf.Transforms(coord);
-  coord.SetZ(0);
+  // This is a direction, not a point: applying the frame translation makes
+  // the continuation decision depend on the placement of the solid.
+  gp_Vec theProj(Vec);
+  theProj.Transform(Transf);
+  theProj.SetZ(0);
   Transf.Invert();
-  Transf.Transforms(coord);
-  gp_Vec theProj(coord);
+  theProj.Transform(Transf);
+  if (theProj.SquareMagnitude() <= gp::Resolution() * gp::Resolution())
+    return false;
 
   // and finally...
   double Angle = theProj.AngleWithRef(Vec3d[0], Normal);
@@ -1444,7 +1447,10 @@ bool ChFi3d_Builder::StartSol(
         // One goes directly by the Vertex
         // And it is checked that there are no other candidates
         TopoDS_Face aux;
-        const int   Nb = SearchFaceOnV(aCommonPoint, F, myVEMap, myEFMap, Fv, aux);
+        // SearchFace already uses the spine for a collapsed contact without
+        // a tangent. Do not repeat a vector-based search in that singular case.
+        const int Nb =
+          aCommonPoint.HasVector() ? SearchFaceOnV(aCommonPoint, F, myVEMap, myEFMap, Fv, aux) : 1;
 
         pons = BRep_Tool::Parameters(aCommonPoint.Vertex(), Fv);
         HS->Initialize(Fv);

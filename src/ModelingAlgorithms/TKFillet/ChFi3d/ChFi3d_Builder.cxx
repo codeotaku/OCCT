@@ -18,6 +18,7 @@
 #include <Blend_FuncInv.hxx>
 #include <BRepBlend_Line.hxx>
 #include <BRepLib.hxx>
+#include <BRepLib_CheckCurveOnSurface.hxx>
 #include <BRepTopAdaptor_TopolTool.hxx>
 #include <ChFi3d_Builder.hxx>
 #include <ChFi3d_Builder_0.hxx>
@@ -512,6 +513,36 @@ void ChFi3d_Builder::Compute()
         const TopoDS_Shape& aF = aIt.Value();
         BRepLib::SameParameter(aF, SameParTol, true);
         ShapeFix::SameParameter(aF, false, SameParTol);
+      }
+    }
+    // SameParameter estimates tolerances by sampling. After all new faces have
+    // been processed, account for extrema between those samples as well.
+    // Do this last: a subsequent SameParameter on an adjacent face can otherwise
+    // replace the tolerance of their shared edge with a sampled estimate again.
+    BRep_Builder aBuilder;
+    for (iF = 1; iF <= aNbSurfaces; ++iF)
+    {
+      for (aIt.Initialize(myCoup->NewFaces(iF)); aIt.More(); aIt.Next())
+      {
+        const TopoDS_Face& aFace = TopoDS::Face(aIt.Value());
+        for (TopExp_Explorer anExp(aFace, TopAbs_EDGE); anExp.More(); anExp.Next())
+        {
+          const TopoDS_Edge& anEdge = TopoDS::Edge(anExp.Current());
+          if (BRep_Tool::Degenerated(anEdge) || !BRep_Tool::SameParameter(anEdge))
+          {
+            continue;
+          }
+          BRepLib_CheckCurveOnSurface aCheck(anEdge, aFace);
+          aCheck.Perform();
+          if (aCheck.IsDone() && aCheck.MaxDistance() > BRep_Tool::Tolerance(anEdge))
+          {
+            aBuilder.UpdateEdge(anEdge, aCheck.MaxDistance());
+            for (TopExp_Explorer aVertex(anEdge, TopAbs_VERTEX); aVertex.More(); aVertex.Next())
+            {
+              aBuilder.UpdateVertex(TopoDS::Vertex(aVertex.Current()), aCheck.MaxDistance());
+            }
+          }
+        }
       }
     }
   }

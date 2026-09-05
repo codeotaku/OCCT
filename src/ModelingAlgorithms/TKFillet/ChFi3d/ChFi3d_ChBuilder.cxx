@@ -382,6 +382,9 @@ void ChFi3d_ChBuilder::Compute()
       }
       *this = aPrimaryBuilder;
     }
+    // A primary build can report completion with invalid consumed topology.
+    // No equivalent ordering is available here, so do not expose false success.
+    done = IsDone() && BRepCheck_Analyzer(Shape()).IsValid();
     return;
   }
 
@@ -427,6 +430,7 @@ void ChFi3d_ChBuilder::Compute()
     aPrimaryBuilder.ChFi3d_Builder::Compute();
     *this = aPrimaryBuilder;
   }
+  done = IsDone() && BRepCheck_Analyzer(Shape()).IsValid();
 }
 
 //=======================================================================
