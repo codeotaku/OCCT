@@ -46,6 +46,7 @@
 #include <ChFiDS_ElSpine.hxx>
 #include <ChFiDS_Spine.hxx>
 #include <BlendFunc_GenChamfer.hxx>
+#include <BlendFunc_ChAsym.hxx>
 #include <ChFiDS_SurfData.hxx>
 #include <Geom2d_BSplineCurve.hxx>
 #include <Geom2d_Curve.hxx>
@@ -1726,7 +1727,8 @@ bool ChFi3d_Builder::ComputeData(occ::handle<ChFiDS_SurfData>&           Data,
   int    nbptmin  = 4;
 
   BRepBlend_Walking TheWalk(S1, S2, I1, I2, HGuide);
-  TheWalk.AllowBoundaryContact(dynamic_cast<BlendFunc_GenChamfer*>(&Func) != nullptr);
+  TheWalk.AllowBoundaryContact(dynamic_cast<BlendFunc_GenChamfer*>(&Func) != nullptr
+                               || dynamic_cast<BlendFunc_ChAsym*>(&Func) != nullptr);
 
   // Start of removal, 2D path controls
   // that qui s'accomodent mal des surfaces a parametrages non homogenes
@@ -2519,7 +2521,8 @@ bool ChFi3d_Builder::SimulData(occ::handle<ChFiDS_SurfData>& /*Data*/,
 {
   BRepBlend_Walking TheWalk(S1, S2, I1, I2, HGuide);
   TheWalk.Check2d(false);
-  TheWalk.AllowBoundaryContact(dynamic_cast<BlendFunc_GenChamfer*>(&Func) != nullptr);
+  TheWalk.AllowBoundaryContact(dynamic_cast<BlendFunc_GenChamfer*>(&Func) != nullptr
+                               || dynamic_cast<BlendFunc_ChAsym*>(&Func) != nullptr);
 
   double MS       = MaxStep;
   double TolGuide = tolguide;

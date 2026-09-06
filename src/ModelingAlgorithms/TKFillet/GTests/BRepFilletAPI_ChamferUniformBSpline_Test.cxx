@@ -90,7 +90,9 @@ static void checkUniformBSpline(const int    geometry,
                                 const int    explicitFace   = 0,
                                 const bool   roundTrip      = false,
                                 const int    representation = 0,
-                                const int    seamOrigin     = 4)
+                                const int    seamOrigin     = 4,
+                                const double angle          = 0.,
+                                const bool   simulate       = false)
 {
   const auto        outer = uniformOuterCurve(geometry);
   const std::string seamSuffix =
@@ -226,10 +228,18 @@ static void checkUniformBSpline(const int    geometry,
       map;
     TopExp::MapShapesAndAncestors(input, TopAbs_EDGE, TopAbs_FACE, map);
     const auto& faces = map.FindFromKey(edge);
-    chamfer.Add(distance,
-                distance,
-                edge,
-                TopoDS::Face(explicitFace == 1 ? faces.First() : faces.Last()));
+    const auto  face = TopoDS::Face(explicitFace == 1 ? faces.First() : faces.Last());
+    if (angle == 0.)
+      chamfer.Add(distance, distance, edge, face);
+    else
+    {
+      // Keep the same physical section when exchanging the reference support.
+      const bool onPlane = BRepAdaptor_Surface(face).GetType() == GeomAbs_Plane;
+      chamfer.AddDA(onPlane ? distance : distance * std::tan(angle),
+                    onPlane ? angle : M_PI / 2. - angle,
+                    edge,
+                    face);
+    }
   };
   if (selection != 1)
   {
@@ -239,6 +249,26 @@ static void checkUniformBSpline(const int    geometry,
   {
     addEdge(inside);
   }
+  if (simulate)
+    for (int contour = 1; contour <= chamfer.NbContours(); ++contour)
+    {
+      ASSERT_NO_THROW(chamfer.Simulate(contour));
+      ASSERT_GT(chamfer.NbSurf(contour), 0);
+      for (int surface = 1; surface <= chamfer.NbSurf(contour); ++surface)
+      {
+        const auto sections = chamfer.Sect(contour, surface);
+        ASSERT_FALSE(sections.IsNull());
+        ASSERT_GT(sections->Length(), 0);
+        for (int i = sections->Lower(); i <= sections->Upper(); ++i)
+        {
+          gp_Lin line;
+          double first, last;
+          sections->Value(i).Get(line, first, last);
+          EXPECT_TRUE(std::isfinite(first) && std::isfinite(last));
+          EXPECT_GT(std::abs(last - first), Precision::Confusion());
+        }
+      }
+    }
   chamfer.Build();
   if (fraction > 1.)
   {
@@ -317,6 +347,9 @@ static void checkUniformBSpline(const int    geometry,
   {
     removed += d * d * shortest / 2. + M_PI * d * d * d / 3.;
   }
+  // For a non-45-degree section, depth scales by tan(angle) at every offset.
+  if (angle != 0.)
+    removed *= std::tan(angle);
   EXPECT_NEAR(before.Mass() - after.Mass(),
               removed * scale * scale * scale,
               std::max(.01, removed * 1.e-4) * scale * scale * scale);
@@ -350,6 +383,34 @@ TEST_P(BRepFilletAPI_UniformBSpline, ConsumesConstantWidthRim)
   const auto [geometry, selection, variant, fraction] = GetParam();
   checkUniformBSpline(geometry, selection, variant, fraction);
 }
+
+class BRepFilletAPI_UniformBSplineDistanceAngle
+    : public testing::TestWithParam<std::tuple<int, int, int, double, double>>
+{
+};
+
+TEST_P(BRepFilletAPI_UniformBSplineDistanceAngle, PreservesSectionAcrossSupportReferences)
+{
+  const auto [geometry, selection, face, degrees, fraction] = GetParam();
+  checkUniformBSpline(geometry,
+                      selection,
+                      0,
+                      fraction,
+                      face,
+                      false,
+                      0,
+                      4,
+                      degrees * M_PI / 180.,
+                      degrees == 45. && fraction == 1.);
+}
+
+INSTANTIATE_TEST_SUITE_P(SectionAngles,
+                         BRepFilletAPI_UniformBSplineDistanceAngle,
+                         testing::Combine(testing::Values(0, 1),
+                                          testing::Values(0, 1, 2),
+                                          testing::Values(1, 2),
+                                          testing::Values(30., 45., 60.),
+                                          testing::Values(.95, 1., 1.005)));
 
 class BRepFilletAPI_UniformBSplineExplicitFace
     : public testing::TestWithParam<std::tuple<int, int, int, double>>
