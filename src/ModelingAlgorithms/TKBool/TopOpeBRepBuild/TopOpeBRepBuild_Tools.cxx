@@ -99,7 +99,7 @@ bool TopOpeBRepBuild_Tools::HasCompleteCoincidence(const Geom2dInt_GInter&    th
          <= aSecondTolerance;
   if (isComplete)
   {
-    theIsReversed = (aLastOnFirst - aFirstOnFirst) * (aLastOnSecond - aFirstOnSecond) < 0.0;
+    theIsReversed = aSegment.IsOpposite();
   }
   return isComplete;
 }

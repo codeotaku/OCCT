@@ -597,8 +597,7 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
         }
         const int                 aReferencePointIndex = aReferencePointIt.Current();
         const TopOpeBRepDS_Point& aReferencePoint      = HDS->Point(aReferencePointIndex);
-        const double aTolerance = std::max(aPoint.Tolerance(), aReferencePoint.Tolerance());
-        if (aPoint.Point().Distance(aReferencePoint.Point()) <= aTolerance)
+        if (aPoint.IsEqual(aReferencePoint))
         {
           ChangeNewVertex(aPointIndex) = NewVertex(aReferencePointIndex);
           break;

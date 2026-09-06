@@ -238,3 +238,40 @@ TEST(TopOpeBRepBuild_CompleteCoincidenceControl, ActualIntersectionRetainsUnmatc
                                                                  isReversed));
     }
 }
+
+TEST(TopOpeBRepBuild_CompleteCoincidenceControl, DirectionUsesStoredIntersectionOrientation)
+{
+  // A nonzero geometric segment can have a parameter span whose square underflows.
+  // Test cached contact records, not the intersector's extreme-parameter behavior.
+  for (const double aRange : {1., 1.e-100, 1.e-170})
+    for (const bool isReversed : {false, true})
+      for (const bool isSwapped : {false, true})
+      {
+        SCOPED_TRACE(testing::Message() << aRange << ", " << isReversed << ", " << isSwapped);
+        NCollection_Array1<gp_Pnt2d> aPoles(1, 2);
+        aPoles(1) = gp_Pnt2d();
+        aPoles(2) = gp_Pnt2d(10., 0.);
+        NCollection_Array1<double> aKnots(1, 2);
+        aKnots(1) = 0.;
+        aKnots(2) = aRange;
+        NCollection_Array1<int> aMultiplicities(1, 2);
+        aMultiplicities.Init(2);
+        const occ::handle<Geom2d_Curve> aFirst =
+          new Geom2d_BSplineCurve(aPoles, aKnots, aMultiplicities, 1);
+        const auto aSecond = occ::down_cast<Geom2d_Curve>(aFirst->Copy());
+        if (isReversed)
+          aSecond->Reverse();
+        const Geom2dAdaptor_Curve a(isSwapped ? aSecond : aFirst), b(isSwapped ? aFirst : aSecond);
+        ASSERT_NEAR(a.Value(0.).Distance(a.Value(aRange)), 10., 1.e-12);
+        const CachedIntersection anIntersection(a,
+                                                0.,
+                                                aRange,
+                                                isReversed ? aRange : 0.,
+                                                isReversed ? 0. : aRange,
+                                                isReversed);
+        bool                     isOpposite = !isReversed;
+        ASSERT_TRUE(
+          TopOpeBRepBuild_Tools::HasCompleteCoincidence(anIntersection, a, b, 1.e-7, isOpposite));
+        EXPECT_EQ(isOpposite, isReversed);
+      }
+}
