@@ -211,8 +211,8 @@ static void checkUniformBSpline(const int    geometry,
       return;
     }
     NCollection_IndexedDataMap<TopoDS_Shape,
-                               NCollection_List<TopoDS_Shape>,
-                               TopTools_ShapeMapHasher>
+                                               NCollection_List<TopoDS_Shape>,
+                                               TopTools_ShapeMapHasher>
       map;
     TopExp::MapShapesAndAncestors(input, TopAbs_EDGE, TopAbs_FACE, map);
     const auto& faces = map.FindFromKey(edge);

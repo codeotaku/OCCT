@@ -21,7 +21,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <GeomAdaptor_Curve.hxx>
 #include <ShapeConstruct_ProjectCurveOnSurface.hxx>
-#include <BRepLib_CheckCurveOnSurface.hxx>
+#include <BOPTools_AlgoTools.hxx>
 #include <ElCLib.hxx>
 #include <Geom2d_BSplineCurve.hxx>
 #include <Geom2d_Conic.hxx>
@@ -1300,9 +1300,9 @@ void TopOpeBRepDS_BuildTool::PCurve(TopoDS_Shape&                    F,
           // Isoparametric projection can succeed without preserving a nonlinear
           // parameterization (for example, a rational circle on a cylinder).
           // Validate the claimed SameParameter result before accepting it.
-          BRepLib_CheckCurveOnSurface check(EE, FF);
-          check.Perform();
-          if (check.IsDone() && check.MaxDistance() <= tolerance)
+          double aDistance, aParameter;
+          if (BOPTools_AlgoTools::ComputeTolerance(FF, EE, aDistance, aParameter)
+              && aDistance <= tolerance)
           {
             return;
           }

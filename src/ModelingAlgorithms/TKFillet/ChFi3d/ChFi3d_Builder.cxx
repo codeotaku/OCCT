@@ -18,8 +18,8 @@
 #include <Blend_FuncInv.hxx>
 #include <BRepBlend_Line.hxx>
 #include <BRepLib.hxx>
-#include <BRepLib_CheckCurveOnSurface.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BOPTools_AlgoTools.hxx>
 #include <BRepTopAdaptor_TopolTool.hxx>
 #include <ChFi3d_Builder.hxx>
 #include <ChFi3d_Builder_0.hxx>
@@ -526,9 +526,10 @@ void ChFi3d_Builder::Compute()
               && !BRep_Tool::Degenerated(anEdge)
               && BRepAdaptor_Curve(anEdge).GetType() >= GeomAbs_BezierCurve)
           {
-            BRepLib_CheckCurveOnSurface aCheck(anEdge, TopoDS::Face(aF));
-            aCheck.Perform();
-            isVerified = aCheck.IsDone() && aCheck.MaxDistance() <= BRep_Tool::Tolerance(anEdge);
+            double aDistance, aParameter;
+            isVerified =
+              BOPTools_AlgoTools::ComputeTolerance(TopoDS::Face(aF), anEdge, aDistance, aParameter)
+              && aDistance <= BRep_Tool::Tolerance(anEdge);
           }
           BRepLib::SameParameter(anEdge, SameParTol, !isVerified);
         }
@@ -553,14 +554,14 @@ void ChFi3d_Builder::Compute()
         {
           continue;
         }
-        BRepLib_CheckCurveOnSurface aCheck(anEdge, aFace);
-        aCheck.Perform();
-        if (aCheck.IsDone() && aCheck.MaxDistance() > BRep_Tool::Tolerance(anEdge))
+        double aDistance, aParameter;
+        if (BOPTools_AlgoTools::ComputeTolerance(aFace, anEdge, aDistance, aParameter)
+            && aDistance > BRep_Tool::Tolerance(anEdge))
         {
-          aBuilder.UpdateEdge(anEdge, aCheck.MaxDistance());
+          aBuilder.UpdateEdge(anEdge, aDistance);
           for (TopExp_Explorer aVertex(anEdge, TopAbs_VERTEX); aVertex.More(); aVertex.Next())
           {
-            aBuilder.UpdateVertex(TopoDS::Vertex(aVertex.Current()), aCheck.MaxDistance());
+            aBuilder.UpdateVertex(TopoDS::Vertex(aVertex.Current()), aDistance);
           }
         }
       }
