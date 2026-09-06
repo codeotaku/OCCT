@@ -32,6 +32,7 @@
 #include <ChFi3d.hxx>
 #include <ChFiDS_FilSpine.hxx>
 #include <ChFiDS_ChamfSpine.hxx>
+#include <GeomConvert_ApproxCurve.hxx>
 #include <ElCLib.hxx>
 #include <ElSLib.hxx>
 #include <Extrema_LocateExtCC.hxx>
@@ -5040,6 +5041,25 @@ Standard_EXPORT void ChFi3d_PerformElSpine(occ::handle<ChFiDS_ElSpine>& HES,
                                            const double                 tol,
                                            const bool                   IsOffset)
 {
+  // Chamfer distances are measured from the guide itself. Length-relative
+  // knot removal can displace it across a nearby restriction at a limit.
+  // Preserve its position while retaining the existing fillet smoothing.
+  const bool   isChamfer        = Spine->IsKind(STANDARD_TYPE(ChFiDS_ChamfSpine));
+  const double aGuideTolerance  = isChamfer ? std::min(tol, Precision::Confusion()) : RealLast();
+  const auto   approximateGuide = [&](const occ::handle<Geom_Curve>& theCurve) {
+    if (!isChamfer)
+    {
+      return ChFi3d_ApproxByC2(theCurve);
+    }
+    // The legacy 101-point fit does not bound the error between samples.
+    // At a chamfer limit, moving the guide can move a contact off its support.
+    GeomConvert_ApproxCurve anApproximation(theCurve, aGuideTolerance, GeomAbs_C2, 1000, 14);
+    if (!anApproximation.IsDone() || anApproximation.MaxError() > aGuideTolerance)
+    {
+      throw Standard_ConstructionError("PerformElSpine: chamfer guide approximation failed");
+    }
+    return anApproximation.Curve();
+  };
 
   bool                           periodic, Bof, checkdeb, cepadur, bIsSmooth, hasApproxByC2;
   int                            IEdge, IF, IL, nbed;
@@ -5216,7 +5236,7 @@ Standard_EXPORT void ChFi3d_PerformElSpine(occ::handle<ChFiDS_ElSpine>& HES,
   //
   TC = new (Geom_TrimmedCurve)(Cv, First, Last);
   BS = GeomConvert::CurveToBSplineCurve(TC);
-  CurveCleaner(BS, std::abs(WL - WF) * 1.e-4, 0);
+  CurveCleaner(BS, std::min(std::abs(WL - WF) * 1.e-4, aGuideTolerance), 0);
   //
   // Smoothing of the curve
   hasApproxByC2 = false;
@@ -5225,7 +5245,7 @@ Standard_EXPORT void ChFi3d_PerformElSpine(occ::handle<ChFiDS_ElSpine>& HES,
   if (aContinuity < GeomAbs_C2 && !bIsSmooth)
   {
     hasApproxByC2 = true;
-    BS            = ChFi3d_ApproxByC2(TC);
+    BS            = approximateGuide(TC);
     TC            = BS;
   }
   //
@@ -5301,7 +5321,7 @@ Standard_EXPORT void ChFi3d_PerformElSpine(occ::handle<ChFiDS_ElSpine>& HES,
     //
     TC = new (Geom_TrimmedCurve)(Cv, First, Last);
     BS = GeomConvert::CurveToBSplineCurve(TC);
-    CurveCleaner(BS, std::abs(WL - WF) * 1.e-4, 0);
+    CurveCleaner(BS, std::min(std::abs(WL - WF) * 1.e-4, aGuideTolerance), 0);
     //
     // Smoothing of the curve
     aContinuity = TC->Continuity();
@@ -5309,7 +5329,7 @@ Standard_EXPORT void ChFi3d_PerformElSpine(occ::handle<ChFiDS_ElSpine>& HES,
     if (aContinuity < GeomAbs_C2 && !bIsSmooth)
     {
       hasApproxByC2 = true;
-      BS            = ChFi3d_ApproxByC2(TC);
+      BS            = approximateGuide(TC);
       TC            = BS;
     }
     //
@@ -5488,19 +5508,19 @@ Standard_EXPORT void ChFi3d_PerformElSpine(occ::handle<ChFiDS_ElSpine>& HES,
     MultMax = BSpline->Degree() - 2;
   }
   // correction C2 or C3 (if possible)
-  CurveCleaner(BSpline, std::abs(WL - WF) * 1.e-4, 1);
-  CurveCleaner(BSpline, std::abs(WL - WF) * 1.e-2, MultMax);
+  CurveCleaner(BSpline, std::min(std::abs(WL - WF) * 1.e-4, aGuideTolerance), 1);
+  CurveCleaner(BSpline, std::min(std::abs(WL - WF) * 1.e-2, aGuideTolerance), MultMax);
   int MultMin = std::max(BSpline->Degree() - 4, 1);
   for (ii = fk; ii <= lk; ii++)
   {
     if (BSpline->Multiplicity(ii) > MultMax)
     {
-      Bof = BSpline->RemoveKnot(ii, MultMax, std::abs(WL - WF) / 10);
+      Bof = BSpline->RemoveKnot(ii, MultMax, std::min(std::abs(WL - WF) / 10, aGuideTolerance));
     }
     // See C4
     if (BSpline->Multiplicity(ii) > MultMin)
     {
-      Bof = BSpline->RemoveKnot(ii, MultMin, std::abs(WL - WF) * 1.e-4);
+      Bof = BSpline->RemoveKnot(ii, MultMin, std::min(std::abs(WL - WF) * 1.e-4, aGuideTolerance));
     }
   }
   // elspine periodic => BSpline Periodic
@@ -5515,7 +5535,7 @@ Standard_EXPORT void ChFi3d_PerformElSpine(occ::handle<ChFiDS_ElSpine>& HES,
       BSpline->SetPeriodic();
       if (shouldSmoothClosure)
       {
-        BSpline->RemoveKnot(1, MultMax, std::abs(WL - WF) / 10);
+        BSpline->RemoveKnot(1, MultMax, std::min(std::abs(WL - WF) / 10, aGuideTolerance));
       }
     }
   }

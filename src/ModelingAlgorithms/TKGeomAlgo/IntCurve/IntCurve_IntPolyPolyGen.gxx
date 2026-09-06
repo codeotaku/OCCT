@@ -1453,6 +1453,16 @@ bool IntCurve_IntPolyPolyGen::findIntersect(const TheCurve&              C1,
                                               TheCurveTool::EpsX(C1));
       }
 
+      // A polygonal tangency zone is only a candidate, particularly when the
+      // refinement limit has been reached. Verify the projected parameters
+      // against the curves before accepting an intersection segment.
+      TheCurveTool::D1(C1, PolyUInf, P1, Tan1);
+      TheCurveTool::D1(C2, PolyVInf, P2, Tan2);
+      if (P1.Distance(P2) > TolConf)
+      {
+        continue;
+      }
+
       if (IntImpParGen::DetermineTransition(Pos1, Tan1, Trans1, Pos2, Tan2, Trans2, TolConf)
           == false)
       {
@@ -1532,6 +1542,13 @@ bool IntCurve_IntPolyPolyGen::findIntersect(const TheCurve&              C1,
                                                 D1.FirstParameter(),
                                                 D1.LastParameter(),
                                                 TheCurveTool::EpsX(C1));
+        }
+
+        TheCurveTool::D1(C1, PolyUSup, P1, Tan1);
+        TheCurveTool::D1(C2, PolyVSup, P2, Tan2);
+        if (P1.Distance(P2) > TolConf)
+        {
+          continue;
         }
 
         if (IntImpParGen::DetermineTransition(Pos1, Tan1, Trans1, Pos2, Tan2, Trans2, TolConf)

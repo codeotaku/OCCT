@@ -183,7 +183,8 @@ void BRepBlend_Walking::Perform(Blend_Function&    Func,
       situ2 = TopAbs_IN;
     }
 
-    if (situ1 != TopAbs_IN || situ2 != TopAbs_IN)
+    if ((situ1 != TopAbs_IN && !(myAllowBoundaryContact && situ1 == TopAbs_ON))
+        || (situ2 != TopAbs_IN && !(myAllowBoundaryContact && situ2 == TopAbs_ON)))
     {
       return;
     }
@@ -265,7 +266,8 @@ bool BRepBlend_Walking::PerformFirstSection(Blend_Function& Func,
   ParDep = sol;
   Pos1   = domain1->Classify(gp_Pnt2d(sol(1), sol(2)), std::min(tolerance(1), tolerance(2)), false);
   Pos2   = domain2->Classify(gp_Pnt2d(sol(3), sol(4)), std::min(tolerance(3), tolerance(4)), false);
-  if (Pos1 != TopAbs_IN || Pos2 != TopAbs_IN)
+  if ((Pos1 != TopAbs_IN && !(myAllowBoundaryContact && Pos1 == TopAbs_ON))
+      || (Pos2 != TopAbs_IN && !(myAllowBoundaryContact && Pos2 == TopAbs_ON)))
   {
     return false;
   }
@@ -1928,6 +1930,17 @@ void BRepBlend_Walking::InternalPerform(Blend_Function& Func,
           domain2->Classify(gp_Pnt2d(sol(3), sol(4)), std::min(tolerance(3), tolerance(4)), false);
       }
       else
+      {
+        situ2 = TopAbs_IN;
+      }
+    }
+    if (myAllowBoundaryContact)
+    {
+      if (situ1 == TopAbs_ON)
+      {
+        situ1 = TopAbs_IN;
+      }
+      if (situ2 == TopAbs_ON)
       {
         situ2 = TopAbs_IN;
       }

@@ -1343,6 +1343,7 @@ bool ChFi3d_ChBuilder::PerformFirstSection(const occ::handle<ChFiDS_Spine>&     
     }
     pFunc->Set(dis, dis, Choix);
     BRepBlend_Walking TheWalk(S1, S2, I1, I2, HGuide);
+    TheWalk.AllowBoundaryContact(true);
 
     // calculate an approximate starting solution
     gp_Vec TgF, TgL, tmp1, tmp2, d1gui;
@@ -1442,6 +1443,7 @@ bool ChFi3d_ChBuilder::PerformFirstSection(const occ::handle<ChFiDS_Spine>&     
       pFunc->Set(Throat, Throat, Choix); // dis2?
     }
     BRepBlend_Walking TheWalk(S1, S2, I1, I2, HGuide);
+    TheWalk.AllowBoundaryContact(true);
 
     // calculate an approximate starting solution
     gp_Vec TgF, TgL, tmp1, tmp2, d1gui;
@@ -1532,6 +1534,7 @@ bool ChFi3d_ChBuilder::PerformFirstSection(const occ::handle<ChFiDS_Spine>&     
     BRepBlend_ChAsym Func(S1, S2, HGuide);
     Func.Set(dis1, angle, Ch);
     BRepBlend_Walking TheWalk(S1, S2, I1, I2, HGuide);
+    TheWalk.AllowBoundaryContact(true);
 
     // calculate an approximate starting solution
     gp_Vec TgF, TgL, tmp1, tmp2, d1gui;

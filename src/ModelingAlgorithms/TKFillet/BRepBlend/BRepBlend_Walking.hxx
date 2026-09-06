@@ -108,6 +108,10 @@ public:
 
   Standard_EXPORT void Check(const bool C);
 
+  //! Allow a contact to remain ON a support boundary while walking.
+  //! OUT contacts are still recadred; the default preserves strict interior walking.
+  void AllowBoundaryContact(const bool theAllow) { myAllowBoundaryContact = theAllow; }
+
   inline bool TwistOnS1() const { return twistflag1; }
 
   inline bool TwistOnS2() const { return twistflag2; }
@@ -207,6 +211,7 @@ private:
   bool                              check;
   bool                              twistflag1;
   bool                              twistflag2;
+  bool                              myAllowBoundaryContact = false;
 };
 
 #endif // _BRepBlend_Walking_HeaderFile
