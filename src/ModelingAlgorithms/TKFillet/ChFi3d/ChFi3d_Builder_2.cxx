@@ -477,7 +477,7 @@ static bool IsInput(const gp_Vec& Vec, const TopoDS_Vertex& Ve, const TopoDS_Fac
 
   // and finally...
   double Angle = theProj.AngleWithRef(Vec3d[0], Normal);
-  return ((Angle >= amin) && (Angle <= amax));
+  return ((Angle >= amin - Precision::Angular()) && (Angle <= amax + Precision::Angular()));
 }
 
 //=================================================================================================

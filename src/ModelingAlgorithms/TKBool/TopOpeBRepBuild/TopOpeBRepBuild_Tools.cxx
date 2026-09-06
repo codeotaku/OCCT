@@ -979,6 +979,12 @@ bool TopOpeBRepBuild_Tools::AreCoincidentEdges(const TopoDS_Edge& theFirst,
                                                const TopoDS_Edge& theSecond,
                                                bool&              theIsReversed)
 {
+  // EdgeEdge can report both search ranges for an open arc contained in a
+  // closed curve. Such a common part does not establish complete coincidence.
+  if (BRep_Tool::IsClosed(theFirst) != BRep_Tool::IsClosed(theSecond))
+  {
+    return false;
+  }
   IntTools_EdgeEdge anIntersection;
   anIntersection.SetEdge1(theFirst);
   anIntersection.SetEdge2(theSecond);

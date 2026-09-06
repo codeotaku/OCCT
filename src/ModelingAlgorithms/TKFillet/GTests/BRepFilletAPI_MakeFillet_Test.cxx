@@ -14,6 +14,7 @@
 #include <BRep_Builder.hxx>
 #include <BRepAlgoAPI_BooleanOperation.hxx>
 #include <BRepAlgoAPI_Common.hxx>
+#include <BRepAlgoAPI_Check.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -31,6 +32,7 @@
 #include <BRepPrimAPI_MakeRevol.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepTools.hxx>
 #include <NCollection_IndexedDataMap.hxx>
 #include <NCollection_IndexedMap.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
@@ -64,6 +66,152 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <string>
+
+TEST(BRepFilletAPI_MakeFilletTest, BoundaryContinuationIncludesAngularTolerance)
+{
+  const std::string file = __FILE__;
+  const std::string fixture =
+    file.substr(0, file.find_last_of("/\\") + 1) + "data/blend_boundary_continuation.brep";
+  for (double scale : {100., 1000.})
+  {
+    for (int placement : {0, 1, 2})
+    {
+      SCOPED_TRACE(testing::Message() << scale << " " << placement);
+      TopoDS_Shape source;
+      BRep_Builder builder;
+      ASSERT_TRUE(BRepTools::Read(source, fixture.c_str(), builder));
+      gp_Trsf scaling;
+      scaling.SetScale(gp_Pnt(), scale);
+      TopoDS_Shape input = BRepBuilderAPI_Transform(source, scaling, true);
+      if (placement != 0)
+      {
+        gp_Trsf transform;
+        if (placement == 2)
+        {
+          transform.SetRotation(gp_Ax1(gp_Pnt(), gp_Dir(1, 2, 3)), .37);
+        }
+        transform.SetTranslationPart(gp_Vec(137., -51., 23.));
+        input.Move(TopLoc_Location(transform));
+      }
+      ASSERT_TRUE(BRepCheck_Analyzer(input).IsValid());
+      NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> edges;
+      TopExp::MapShapes(input, TopAbs_EDGE, edges);
+      ASSERT_GE(edges.Extent(), 7);
+      BRepFilletAPI_MakeFillet fillet(input);
+      fillet.SetParams(.01, 1.e-4, 1.e-5, 1.e-4, 1.e-5, 1.e-3);
+      NCollection_Array1<gp_Pnt2d> radii(1, 2);
+      radii(1) = gp_Pnt2d(1., 1.e-4);
+      radii(2) = gp_Pnt2d(2., 8. * scale);
+      fillet.Add(radii, TopoDS::Edge(edges(3)));
+      radii(1) = gp_Pnt2d(0., 8. * scale);
+      radii(2) = gp_Pnt2d(1., 1.e-4);
+      fillet.Add(radii, TopoDS::Edge(edges(7)));
+      fillet.Build();
+      ASSERT_TRUE(fillet.IsDone());
+      EXPECT_TRUE(BRepCheck_Analyzer(fillet.Shape()).IsValid());
+      GProp_GProps properties;
+      BRepGProp::SurfaceProperties(fillet.Shape(), properties, 1.e-4);
+      EXPECT_NEAR(properties.Mass(), 480.062 * scale * scale, .048 * scale * scale);
+    }
+  }
+}
+
+TEST(BRepFilletAPI_MakeFilletTest, SharedTopologyAndParameterizationPreservation)
+{
+  struct Case
+  {
+    const char* file;
+    int         edge;
+    double      radius;
+    double      area;
+    bool        rotate;
+  };
+
+  // The rotated restriction fixture already fails on IR; test its translation
+  // here, and exercise rotation on the self-intersection fixture.
+  const Case        cases[]   = {{"blend_self_intersection.brep", 14, 30., 43339.8, true},
+                                 {"blend_trimmed_restriction.brep", 7, 10., 61327.9, false}};
+  const std::string file      = __FILE__;
+  const std::string directory = file.substr(0, file.find_last_of("/\\") + 1) + "data/";
+  for (const auto& test : cases)
+  {
+    for (bool located : {false, true})
+    {
+      SCOPED_TRACE(testing::Message() << test.file << " located=" << located);
+      TopoDS_Shape input;
+      BRep_Builder builder;
+      ASSERT_TRUE(BRepTools::Read(input, (directory + test.file).c_str(), builder));
+      if (located)
+      {
+        gp_Trsf placement;
+        if (test.rotate)
+        {
+          placement.SetRotation(gp_Ax1(gp_Pnt(), gp_Dir(1, 2, 3)), .37);
+        }
+        placement.SetTranslationPart(gp_Vec(137., -51., 23.));
+        input.Move(TopLoc_Location(placement));
+      }
+      ASSERT_TRUE(BRepCheck_Analyzer(input).IsValid());
+      ASSERT_TRUE(BRepAlgoAPI_Check(input).IsValid());
+      NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> edges;
+      TopExp::MapShapes(input, TopAbs_EDGE, edges);
+      ASSERT_GE(edges.Extent(), test.edge);
+      BRepFilletAPI_MakeFillet fillet(input);
+      fillet.Add(test.radius, TopoDS::Edge(edges(test.edge)));
+      fillet.Build();
+      ASSERT_TRUE(fillet.IsDone());
+      EXPECT_TRUE(BRepCheck_Analyzer(fillet.Shape()).IsValid());
+      GProp_GProps properties;
+      BRepGProp::SurfaceProperties(fillet.Shape(), properties, 1.e-4);
+      EXPECT_NEAR(properties.Mass(), test.area, test.area * 1.e-4);
+    }
+  }
+}
+
+TEST(BRepFilletAPI_MakeFilletTest, SlotInCylinderPreservesSharedBoundary)
+{
+  for (double scale : {1., 10.})
+  {
+    for (double radius : {.4, .5, .6})
+    {
+      SCOPED_TRACE(testing::Message() << scale << " " << radius);
+      const TopoDS_Shape cylinder = BRepPrimAPI_MakeCylinder(5. * scale, 13. * scale);
+      const TopoDS_Shape slot =
+        BRepPrimAPI_MakeBox(gp_Pnt(0., -7. * scale, scale), 3. * scale, 5. * scale, 7. * scale);
+      const TopoDS_Shape input = BRepAlgoAPI_Cut(cylinder, slot);
+      ASSERT_TRUE(BRepAlgoAPI_Check(input).IsValid());
+      NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> edges;
+      TopExp::MapShapes(input, TopAbs_EDGE, edges);
+      BRepFilletAPI_MakeFillet fillet(input);
+      int                      count = 0;
+      for (const auto& shape : edges)
+      {
+        const auto edge  = TopoDS::Edge(shape);
+        const auto first = BRep_Tool::Pnt(TopExp::FirstVertex(edge));
+        const auto last  = BRep_Tool::Pnt(TopExp::LastVertex(edge));
+        if (std::abs(std::hypot(first.X(), first.Y()) - 5. * scale) < 1.e-7
+            && std::abs(std::hypot(last.X(), last.Y()) - 5. * scale) < 1.e-7
+            && first.Z() >= scale - 1.e-7 && first.Z() <= 8. * scale + 1.e-7
+            && last.Z() >= scale - 1.e-7 && last.Z() <= 8. * scale + 1.e-7)
+        {
+          fillet.Add(radius * scale, edge);
+          ++count;
+        }
+      }
+      ASSERT_EQ(count, 4);
+      fillet.Build();
+      ASSERT_TRUE(fillet.IsDone());
+      EXPECT_TRUE(BRepCheck_Analyzer(fillet.Shape()).IsValid());
+      // The stock DRAW contract is BRepCheck validity. At scale 10 the .5
+      // and .6 variants already report Boolean self-interference on upstream IR.
+      if (scale == 1. || radius == .4)
+      {
+        EXPECT_TRUE(BRepAlgoAPI_Check(fillet.Shape()).IsValid());
+      }
+    }
+  }
+}
 
 // Regression for fillets that must remove an intervening face or meet on opposite
 // edges of a prism. Related reports:

@@ -19,6 +19,7 @@
 #include <BRepBlend_Line.hxx>
 #include <BRepLib.hxx>
 #include <BRepLib_CheckCurveOnSurface.hxx>
+#include <BRepCheck_Analyzer.hxx>
 #include <BRepTopAdaptor_TopolTool.hxx>
 #include <ChFi3d_Builder.hxx>
 #include <ChFi3d_Builder_0.hxx>
@@ -511,6 +512,9 @@ void ChFi3d_Builder::Compute()
       for (; aIt.More(); aIt.Next())
       {
         const TopoDS_Shape& aF = aIt.Value();
+        // Distance agreement alone does not exclude a self-intersecting
+        // pcurve. Let SameParameter repair invalid trimming wires as before.
+        const bool isValidFace = BRepCheck_Analyzer(aF).IsValid();
         // Keep a verified non-analytic parameterization: forcing it through
         // SameParameter again can replace an accurate projected pcurve with
         // a less accurate approximation. Analytic edges retain the old path.
@@ -518,7 +522,7 @@ void ChFi3d_Builder::Compute()
         {
           const TopoDS_Edge& anEdge     = TopoDS::Edge(anEdgeIt.Current());
           bool               isVerified = false;
-          if (BRep_Tool::SameRange(anEdge) && BRep_Tool::SameParameter(anEdge)
+          if (isValidFace && BRep_Tool::SameRange(anEdge) && BRep_Tool::SameParameter(anEdge)
               && !BRep_Tool::Degenerated(anEdge)
               && BRepAdaptor_Curve(anEdge).GetType() >= GeomAbs_BezierCurve)
           {

@@ -44,6 +44,7 @@
 #include <TopOpeBRepDS_HDataStructure.hxx>
 #include <TopOpeBRepDS_PointIterator.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
+#include <GeomAdaptor_Curve.hxx>
 #include <Standard_ConstructionError.hxx>
 
 #include <algorithm>
@@ -413,6 +414,29 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
                                                          anEdge,
                                                          isReversed))
           {
+            // Only unchanged boundary vertices permit reuse of the whole edge.
+            // Other interferences trim it and must retain the existing splitting
+            // path; copying the edge would restore a consumed piece.
+            TopoDS_Vertex aFirstVertex, aLastVertex;
+            TopExp::Vertices(anEdge, aFirstVertex, aLastVertex);
+            bool isTrimmed = false;
+            for (TopOpeBRepDS_PointIterator aPointIt(HDS->EdgePoints(anEdge));
+                 aPointIt.More() && !isTrimmed;
+                 aPointIt.Next())
+            {
+              if (aPointIt.IsPoint())
+              {
+                isTrimmed = true;
+                break;
+              }
+              const auto aVertex =
+                HDS->Shape(aPointIt.Current()).Oriented(aPointIt.Orientation(TopAbs_IN));
+              isTrimmed = !aVertex.IsEqual(aFirstVertex) && !aVertex.IsEqual(aLastVertex);
+            }
+            if (isTrimmed)
+            {
+              continue;
+            }
             BDS.ChangeCurve(aCurve.Index).SetExistingEdge(anEdge, isReversed);
             BDS.ChangeCurve(aCurve.Index).SetRange(aCurve.FirstParameter, aCurve.LastParameter);
             for (int anEnd = 0; anEnd < 2; ++anEnd)
@@ -482,11 +506,28 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
             }
           }
         }
-        for (int aPointIndex = 1; aPointIndex <= anIntersector.NbPoints(); ++aPointIndex)
+        // Original support faces need shared vertices for surviving T-junctions.
+        // Generated blend faces already select their trimming wires; connecting
+        // provisional end-cap traces here can attach discarded branches to them.
+        for (int aPointIndex = 1; !aSupport.IsNull() && aPointIndex <= anIntersector.NbPoints();
+             ++aPointIndex)
         {
-          const auto& aPoint = anIntersector.Point(aPointIndex);
-          if ((aPoint.TransitionOfFirst().PositionOnCurve() == IntRes2d_Middle)
-              != (aPoint.TransitionOfSecond().PositionOnCurve() == IntRes2d_Middle))
+          const auto&  aPoint    = anIntersector.Point(aPointIndex);
+          const auto&  aFirst3d  = BDS.Curve(aFirst.Index);
+          const auto&  aSecond3d = BDS.Curve(aSecond.Index);
+          const double aFirstTolerance =
+            GeomAdaptor_Curve(aFirst3d.Curve())
+              .Resolution(std::max(Precision::Confusion(), aFirst3d.Tolerance()));
+          const double aSecondTolerance =
+            GeomAdaptor_Curve(aSecond3d.Curve())
+              .Resolution(std::max(Precision::Confusion(), aSecond3d.Tolerance()));
+          const bool isFirstInterior =
+            aPoint.ParamOnFirst() > aFirst.FirstParameter + aFirstTolerance
+            && aPoint.ParamOnFirst() < aFirst.LastParameter - aFirstTolerance;
+          const bool isSecondInterior =
+            aPoint.ParamOnSecond() > aSecond.FirstParameter + aSecondTolerance
+            && aPoint.ParamOnSecond() < aSecond.LastParameter - aSecondTolerance;
+          if (isFirstInterior != isSecondInterior)
           {
             hasTraceContacts = true;
           }

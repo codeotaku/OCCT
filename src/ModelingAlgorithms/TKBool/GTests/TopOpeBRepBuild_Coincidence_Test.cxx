@@ -103,6 +103,34 @@ class TopOpeBRepBuild_Coincidence : public testing::TestWithParam<std::tuple<int
 {
 };
 
+TEST(TopOpeBRepBuild_CoincidenceRepresentation, ClosedCurveDoesNotEqualContainedSplineArc)
+{
+  for (int kind : {1, 2})
+  {
+    for (double fraction : {.1, .4, .8})
+    {
+      for (double start : {0., 1., 3.})
+      {
+        for (int placement : {0, 1, 2})
+        {
+          SCOPED_TRACE(testing::Message()
+                       << kind << " " << fraction << " " << start << " " << placement);
+          const auto curve  = makeCurve(kind);
+          const auto spline = GeomConvert::CurveToBSplineCurve(
+            new Geom_TrimmedCurve(curve, start, start + fraction * 2. * M_PI));
+          const auto whole = placedEdge(BRepBuilderAPI_MakeEdge(curve), placement);
+          const auto part  = placedEdge(BRepBuilderAPI_MakeEdge(spline), placement);
+          ASSERT_TRUE(BRepCheck_Analyzer(whole).IsValid());
+          ASSERT_TRUE(BRepCheck_Analyzer(part).IsValid());
+          bool reversed = false;
+          EXPECT_FALSE(TopOpeBRepBuild_Tools::AreCoincidentEdges(whole, part, reversed));
+          EXPECT_FALSE(TopOpeBRepBuild_Tools::AreCoincidentEdges(part, whole, reversed));
+        }
+      }
+    }
+  }
+}
+
 TEST_P(TopOpeBRepBuild_Coincidence, FullRangeAndDirectionContract)
 {
   const auto [kind, relation, placement, swapped] = GetParam();
