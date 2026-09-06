@@ -15,9 +15,18 @@
 // commercial license or contractual agreement.
 
 #include <Standard_Integer.hxx>
+#include <BOPAlgo_Builder.hxx>
+#include <BOPTools_AlgoTools.hxx>
+#include <IntTools_Context.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <TopTools_ShapeMapHasher.hxx>
+#include <NCollection_IndexedMap.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp.hxx>
 #include <Geom2dAdaptor_Curve.hxx>
 #include <Geom2dInt_GInter.hxx>
 #include <IntRes2d_IntersectionSegment.hxx>
+#include <IntRes2d_IntersectionPoint.hxx>
 #include <NCollection_Array1.hxx>
 #include <NCollection_HArray1.hxx>
 #include <NCollection_LinearVector.hxx>
@@ -27,6 +36,7 @@
 #include <TopoDS_Shape.hxx>
 #include <TopOpeBRepBuild_define.hxx>
 #include <TopOpeBRepBuild_EdgeBuilder.hxx>
+#include <TopOpeBRepBuild_Tools.hxx>
 #include <TopOpeBRepBuild_PaveSet.hxx>
 #include <TopOpeBRepDS_BuildTool.hxx>
 #include <TopOpeBRepDS_Curve.hxx>
@@ -34,9 +44,12 @@
 #include <TopOpeBRepDS_CurveIterator.hxx>
 #include <TopOpeBRepDS_HDataStructure.hxx>
 #include <TopOpeBRepDS_PointIterator.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
+#include <Standard_ConstructionError.hxx>
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace
 {
@@ -82,41 +95,6 @@ bool TopOpeBRepBuild_CurveRange(const TopOpeBRepDS_Curve&        theCurve,
   return false;
 }
 
-bool TopOpeBRepBuild_HasCompleteCoincidence(const Geom2dInt_GInter&    theIntersector,
-                                            const Geom2dAdaptor_Curve& theFirstCurve,
-                                            const Geom2dAdaptor_Curve& theSecondCurve,
-                                            bool&                      theIsReversed)
-{
-  if (theIntersector.NbSegments() != 1)
-  {
-    return false;
-  }
-
-  const IntRes2d_IntersectionSegment& aSegment = theIntersector.Segment(1);
-  if (!aSegment.HasFirstPoint() || !aSegment.HasLastPoint())
-  {
-    return false;
-  }
-
-  const double aFirstOnFirst  = aSegment.FirstPoint().ParamOnFirst();
-  const double aLastOnFirst   = aSegment.LastPoint().ParamOnFirst();
-  const double aFirstOnSecond = aSegment.FirstPoint().ParamOnSecond();
-  const double aLastOnSecond  = aSegment.LastPoint().ParamOnSecond();
-  const bool   isComplete =
-    std::abs(std::min(aFirstOnFirst, aLastOnFirst) - theFirstCurve.FirstParameter())
-      <= Precision::PConfusion()
-    && std::abs(std::max(aFirstOnFirst, aLastOnFirst) - theFirstCurve.LastParameter())
-         <= Precision::PConfusion()
-    && std::abs(std::min(aFirstOnSecond, aLastOnSecond) - theSecondCurve.FirstParameter())
-         <= Precision::PConfusion()
-    && std::abs(std::max(aFirstOnSecond, aLastOnSecond) - theSecondCurve.LastParameter())
-         <= Precision::PConfusion();
-  if (isComplete)
-  {
-    theIsReversed = (aLastOnFirst - aFirstOnFirst) * (aLastOnSecond - aFirstOnSecond) < 0.0;
-  }
-  return isComplete;
-}
 
 bool TopOpeBRepBuild_FindCurveEnd(const occ::handle<TopOpeBRepDS_HDataStructure>& theHDS,
                                   const int                                       theCurveIndex,
@@ -144,6 +122,22 @@ bool TopOpeBRepBuild_FindCurveEnd(const occ::handle<TopOpeBRepDS_HDataStructure>
     }
   }
   return aBestDistance <= Precision::PConfusion();
+}
+
+bool TopOpeBRepBuild_IsCoincidentRestriction(const TopOpeBRepDS_Curve& theCurve,
+                                             const double              theFirst,
+                                             const double              theLast,
+                                             const TopoDS_Edge&        theRestriction,
+                                             bool&                     theIsReversed)
+{
+  BRepBuilderAPI_MakeEdge aMaker(theCurve.Curve(), theFirst, theLast);
+  if (!aMaker.IsDone())
+  {
+    return false;
+  }
+  const TopoDS_Edge aTrace = aMaker.Edge();
+  BRep_Builder().UpdateEdge(aTrace, theCurve.Tolerance());
+  return TopOpeBRepBuild_Tools::AreCoincidentEdges(aTrace, theRestriction, theIsReversed);
 }
 } // namespace
 
@@ -184,11 +178,104 @@ void TopOpeBRepBuild_Builder::BuildEdges(const int                              
       {
         myBuildTool.AddEdgeVertex(C.ExistingEdge(), aCopiedEdge, aVertexIt.Current());
       }
+      const auto anOriginal  = TopoDS::Edge(C.ExistingEdge().Oriented(TopAbs_FORWARD));
+      const auto anOldVertex = TopExp::FirstVertex(anOriginal);
+      if (!anOldVertex.IsNull() && anOldVertex.IsSame(TopExp::LastVertex(anOriginal)))
+      {
+        // Full coincidence of closed curves does not imply coincidence of
+        // their seam vertices. Preserve all seams instead of moving a vertex
+        // or projecting a whole edge across a surface's parameter cut.
+        double                      aFirst, aLast;
+        const auto                  aCurve = BRep_Tool::Curve(anOriginal, aFirst, aLast);
+        GeomAPI_ProjectPointOnCurve aProjection;
+        aProjection.Init(aCurve, aFirst, aLast);
+        std::vector<std::pair<double, TopoDS_Vertex>> aCuts = {{aFirst, anOldVertex},
+                                                               {aLast, anOldVertex}};
+        for (TopOpeBRepDS_CurveExplorer aCurveIt(HDS->DS(), false); aCurveIt.More();
+             aCurveIt.Next())
+        {
+          if (!aCurveIt.Curve().ExistingEdge().IsSame(anOriginal))
+          {
+            continue;
+          }
+          for (int anEnd = 0; anEnd < 2; ++anEnd)
+          {
+            int  aPointIndex = 0;
+            bool isPoint     = false;
+            if (!TopOpeBRepBuild_FindCurveEnd(HDS,
+                                              aCurveIt.Index(),
+                                              anEnd == 0,
+                                              aPointIndex,
+                                              isPoint)
+                || !isPoint)
+            {
+              continue;
+            }
+            const auto aVertex = TopoDS::Vertex(NewVertex(aPointIndex));
+            const auto aPoint  = BRep_Tool::Pnt(aVertex);
+            bool       isKnown = false;
+            for (const auto& aCut : aCuts)
+            {
+              if (aPoint.Distance(BRep_Tool::Pnt(aCut.second))
+                  <= std::max(BRep_Tool::Tolerance(aVertex), BRep_Tool::Tolerance(aCut.second)))
+              {
+                ChangeNewVertex(aPointIndex) = aCut.second;
+                isKnown                      = true;
+                break;
+              }
+            }
+            if (isKnown)
+            {
+              continue;
+            }
+            aProjection.Perform(aPoint);
+            const double aTolerance = std::max({BRep_Tool::Tolerance(anOriginal),
+                                                BRep_Tool::Tolerance(aVertex),
+                                                aCurveIt.Curve().Tolerance()});
+            if (!aProjection.NbPoints() || aProjection.LowerDistance() > aTolerance)
+            {
+              throw Standard_ConstructionError("BuildEdges: coincident seam projection failed");
+            }
+            aCuts.emplace_back(aProjection.LowerDistanceParameter(), aVertex);
+          }
+        }
+        if (aCuts.size() > 2)
+        {
+          std::sort(aCuts.begin(), aCuts.end(), [](const auto& a, const auto& b) {
+            return a.first < b.first;
+          });
+          TopoDS_Wire  aWire;
+          BRep_Builder aBuilder;
+          aBuilder.MakeWire(aWire);
+          for (size_t i = 1; i < aCuts.size(); ++i)
+          {
+            TopoDS_Edge aSplit;
+            BOPTools_AlgoTools::MakeSplitEdge(anOriginal,
+                                              aCuts[i - 1].second,
+                                              aCuts[i - 1].first,
+                                              aCuts[i].second,
+                                              aCuts[i].first,
+                                              aSplit);
+            aBuilder.Add(aWire, aSplit);
+          }
+          aCopiedEdge = aWire;
+        }
+      }
       myCoincidentEdges.Bind(C.ExistingEdge(), aCopiedEdge);
     }
     TopoDS_Shape anEdge = myCoincidentEdges(C.ExistingEdge());
     anEdge.Orientation(TopAbs_FORWARD);
-    ChangeNewEdges(iC).Append(anEdge);
+    if (anEdge.ShapeType() == TopAbs_WIRE)
+    {
+      for (TopExp_Explorer it(anEdge, TopAbs_EDGE); it.More(); it.Next())
+      {
+        ChangeNewEdges(iC).Append(it.Current());
+      }
+    }
+    else
+    {
+      ChangeNewEdges(iC).Append(anEdge);
+    }
     return;
   }
 
@@ -248,12 +335,27 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
   myNewEdges.Clear();
   myCoincidentEdges.Clear();
   TopOpeBRepDS_CurveExplorer cex;
+  bool                       hasTraceContacts = false;
 
   NCollection_LinearVector<TopOpeBRepBuild_SurfaceCurve> aSurfaceCurves;
-  for (int aSurfaceIndex = 1; aSurfaceIndex <= HDS->NbSurfaces(); ++aSurfaceIndex)
+  const int                                              aNbSurfaces = HDS->NbSurfaces();
+  const int                                              aNbShapes   = HDS->NbShapes();
+  for (int aSurfaceIndex = 1; aSurfaceIndex <= aNbSurfaces + aNbShapes; ++aSurfaceIndex)
   {
     aSurfaceCurves.Clear();
-    for (TopOpeBRepDS_CurveIterator aCurveIt(HDS->SurfaceCurves(aSurfaceIndex)); aCurveIt.More();
+    TopoDS_Face aSupport;
+    if (aSurfaceIndex > aNbSurfaces)
+    {
+      const TopoDS_Shape& aShape = HDS->Shape(aSurfaceIndex - aNbSurfaces, false);
+      if (aShape.IsNull() || aShape.ShapeType() != TopAbs_FACE)
+      {
+        continue;
+      }
+      aSupport = TopoDS::Face(aShape);
+    }
+    for (TopOpeBRepDS_CurveIterator aCurveIt(aSupport.IsNull() ? HDS->SurfaceCurves(aSurfaceIndex)
+                                                               : HDS->FaceCurves(aSupport));
+         aCurveIt.More();
          aCurveIt.Next())
     {
       const occ::handle<Geom2d_Curve>& aPCurve = aCurveIt.PCurve();
@@ -270,6 +372,80 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
       }
     }
 
+    // Corner trimming can extend a previously partial limiting domain to a
+    // complete restriction. Recheck on the original support after all corners
+    // have been built, using the same coincidence test as generated curves.
+    if (!aSupport.IsNull())
+    {
+      for (const TopOpeBRepBuild_SurfaceCurve& aCurve : aSurfaceCurves)
+      {
+        if (!BDS.Curve(aCurve.Index).ExistingEdge().IsNull())
+        {
+          continue;
+        }
+        Geom2dAdaptor_Curve aNewCurve(aCurve.PCurve, aCurve.FirstParameter, aCurve.LastParameter);
+        for (TopExp_Explorer anIt(aSupport, TopAbs_EDGE); anIt.More(); anIt.Next())
+        {
+          const TopoDS_Edge anEdge = TopoDS::Edge(anIt.Current());
+          if (BRep_Tool::Degenerated(anEdge))
+          {
+            continue;
+          }
+          double                          aFirst, aLast;
+          const occ::handle<Geom2d_Curve> aPCurve =
+            BRep_Tool::CurveOnSurface(anEdge, aSupport, aFirst, aLast);
+          if (aPCurve.IsNull())
+          {
+            continue;
+          }
+          Geom2dAdaptor_Curve aRestriction(aPCurve, aFirst, aLast);
+          Geom2dInt_GInter    anIntersector(aNewCurve,
+                                            aRestriction,
+                                            Precision::PConfusion(),
+                                            Precision::PConfusion());
+          bool                isReversed = false;
+          if (TopOpeBRepBuild_Tools::HasCompleteCoincidence(anIntersector,
+                                                            aNewCurve,
+                                                            aRestriction,
+                                                            Precision::PConfusion(),
+                                                            isReversed)
+              || TopOpeBRepBuild_IsCoincidentRestriction(BDS.Curve(aCurve.Index),
+                                                         aCurve.FirstParameter,
+                                                         aCurve.LastParameter,
+                                                         anEdge,
+                                                         isReversed))
+          {
+            BDS.ChangeCurve(aCurve.Index).SetExistingEdge(anEdge, isReversed);
+            BDS.ChangeCurve(aCurve.Index).SetRange(aCurve.FirstParameter, aCurve.LastParameter);
+            for (int anEnd = 0; anEnd < 2; ++anEnd)
+            {
+              int  aGeometryIndex = 0;
+              bool isPoint        = false;
+              if (TopOpeBRepBuild_FindCurveEnd(HDS,
+                                               aCurve.Index,
+                                               anEnd == 0,
+                                               aGeometryIndex,
+                                               isPoint)
+                  && isPoint)
+              {
+                const bool isFirst = (anEnd == 0) != isReversed;
+                const auto aVertex =
+                  isFirst ? TopExp::FirstVertex(anEdge) : TopExp::LastVertex(anEdge);
+                if (BRep_Tool::Pnt(aVertex).Distance(BDS.Point(aGeometryIndex).Point())
+                    <= std::max(BRep_Tool::Tolerance(aVertex),
+                                BDS.Point(aGeometryIndex).Tolerance()))
+                {
+                  ChangeNewVertex(aGeometryIndex) = aVertex;
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // Opposing chamfers also meet on an original support face.
     for (size_t aFirstIndex = 0; aFirstIndex < aSurfaceCurves.Size(); ++aFirstIndex)
     {
       for (size_t aSecondIndex = aFirstIndex + 1; aSecondIndex < aSurfaceCurves.Size();
@@ -286,12 +462,36 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
                                        Precision::PConfusion(),
                                        Precision::PConfusion());
         bool                isReversed = false;
-        if (TopOpeBRepBuild_HasCompleteCoincidence(anIntersector,
-                                                   aFirstCurve,
-                                                   aSecondCurve,
-                                                   isReversed))
+        if (TopOpeBRepBuild_Tools::HasCompleteCoincidence(anIntersector,
+                                                          aFirstCurve,
+                                                          aSecondCurve,
+                                                          Precision::PConfusion(),
+                                                          isReversed))
         {
           BDS.MergeEquivalentCurves(aFirst.Index, aSecond.Index, isReversed);
+        }
+        else
+        {
+          for (int aSegmentIndex = 1; aSegmentIndex <= anIntersector.NbSegments(); ++aSegmentIndex)
+          {
+            const auto& aSegment = anIntersector.Segment(aSegmentIndex);
+            if (aSegment.HasFirstPoint() && aSegment.HasLastPoint()
+                && std::abs(aSegment.LastPoint().ParamOnFirst()
+                            - aSegment.FirstPoint().ParamOnFirst())
+                     > Precision::PConfusion())
+            {
+              hasTraceContacts = true;
+            }
+          }
+        }
+        for (int aPointIndex = 1; aPointIndex <= anIntersector.NbPoints(); ++aPointIndex)
+        {
+          const auto& aPoint = anIntersector.Point(aPointIndex);
+          if ((aPoint.TransitionOfFirst().PositionOnCurve() == IntRes2d_Middle)
+              != (aPoint.TransitionOfSecond().PositionOnCurve() == IntRes2d_Middle))
+          {
+            hasTraceContacts = true;
+          }
         }
       }
     }
@@ -439,6 +639,77 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
       continue;
     }
     BuildEdges(ic, HDS);
+  }
+
+  // Whole-curve equivalence cannot represent partial coincidence or a T-junction.
+  // Reuse General Fuse to split the generated boundaries into shared intervals.
+  // The history maps preserve each curve's association with its split edges;
+  // their orientations remain relative to that curve, not to the shared 3D curve.
+  if (hasTraceContacts)
+  {
+    BOPAlgo_Builder aSplitter;
+    aSplitter.SetNonDestructive(true);
+    NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> anArguments;
+    for (cex.Init(BDS, false); cex.More(); cex.Next())
+    {
+      for (const TopoDS_Shape& anEdge : NewEdges(cex.Index()))
+      {
+        if (!BRep_Tool::Degenerated(TopoDS::Edge(anEdge)) && !anArguments.Contains(anEdge))
+        {
+          anArguments.Add(anEdge);
+          aSplitter.AddArgument(anEdge);
+        }
+      }
+    }
+    aSplitter.Perform();
+    if (aSplitter.HasErrors())
+    {
+      throw Standard_ConstructionError("Coincident trace splitting failed");
+    }
+    occ::handle<IntTools_Context> aContext = new IntTools_Context;
+    for (cex.Init(BDS, false); cex.More(); cex.Next())
+    {
+      NCollection_List<TopoDS_Shape> aSplits;
+      for (const TopoDS_Shape& anEdge : NewEdges(cex.Index()))
+      {
+        const auto& anImages = aSplitter.Modified(anEdge);
+        if (anImages.IsEmpty())
+        {
+          if (!aSplitter.IsDeleted(anEdge))
+          {
+            aSplits.Append(anEdge);
+          }
+          continue;
+        }
+        for (TopoDS_Shape aSplit : anImages)
+        {
+          if (aSplit.ShapeType() != TopAbs_EDGE)
+          {
+            continue;
+          }
+          aSplit.Orientation(TopAbs_FORWARD);
+          int anError = 0;
+          aSplit.Orientation(
+            BOPTools_AlgoTools::IsSplitToReverse(aSplit, anEdge, aContext, &anError)
+              ? TopAbs_REVERSED
+              : TopAbs_FORWARD);
+          if (anError != 0)
+          {
+            throw Standard_ConstructionError("Cannot orient split intersection curve");
+          }
+          aSplits.Append(aSplit);
+        }
+      }
+      ChangeNewEdges(cex.Index()) = aSplits;
+    }
+    for (int aPoint = 1; aPoint <= HDS->NbPoints(); ++aPoint)
+    {
+      const auto& anImages = aSplitter.Modified(NewVertex(aPoint));
+      if (!anImages.IsEmpty())
+      {
+        ChangeNewVertex(aPoint) = anImages.First();
+      }
+    }
   }
 
   int                      ip, np = HDS->NbPoints();

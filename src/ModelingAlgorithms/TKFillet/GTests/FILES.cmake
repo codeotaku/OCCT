@@ -2,6 +2,13 @@
 set(OCCT_TKFillet_GTests_FILES_LOCATION "${CMAKE_CURRENT_LIST_DIR}")
 
 set(OCCT_TKFillet_GTests_FILES
+  BRepFilletAPI_ChamferAsymmetricLimit_Test.cxx
+  BRepFilletAPI_ChamferConsumedRim_Test.cxx
+  BRepFilletAPI_ChamferCurvedSupports_Test.cxx
+  BRepFilletAPI_ChamferLimit_Test.cxx
+  BRepFilletAPI_ChamferMultiWire_Test.cxx
+  BRepFilletAPI_ChamferTangentBoss_Test.cxx
+  ChFi3d_Contact_Test.cxx
   BRepFilletAPI_ChamferMatrix_Test.cxx
   BRepFilletAPI_MakeChamfer_Test.cxx
   BRepFilletAPI_MakeFillet_Test.cxx

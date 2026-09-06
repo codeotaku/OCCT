@@ -1,0 +1,9 @@
+puts "1177: Opposing equal-distance chamfers meet and consume their common face"
+pload TOPTEST
+box source 10 10 10
+explode source e
+chamf result source source_10 5 source_9 5
+checkshape result
+checknbshapes result -solid 1 -shell 1
+checkprops result -v 750 -eps 1.e-7
+checkmaxtol result -min_tol 1.01e-4

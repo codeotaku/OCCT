@@ -20,6 +20,7 @@
 #include <BRepBlend_Line.hxx>
 #include <BRepTopAdaptor_TopolTool.hxx>
 #include <ChFi3d_Builder.hxx>
+#include <Geom2dAPI_ProjectPointOnCurve.hxx>
 #include <ChFi3d_Builder_0.hxx>
 #include <ChFiDS_CommonPoint.hxx>
 #include <ChFiDS_FaceInterference.hxx>
@@ -381,6 +382,31 @@ bool ChFi3d_Builder::PerformTwoCornerbyInter(const int Index)
       done = false;
       return done;
     }
+    // A pole has an arbitrary initial U. Match the collapsed surface trace
+    // to the actual intersection pcurve before trimming its degenerate edge.
+    const double aCommonEnd = IFaCo1 == 1 ? Gc->FirstParameter() : Gc->LastParameter();
+    if (Fd1->Interference(IFaCo1).PCurveOnFace().IsNull())
+    {
+      Geom2dAPI_ProjectPointOnCurve aProjection(PGc1->Value(aCommonEnd),
+                                                Fd1->Interference(IFaCo1).PCurveOnSurf());
+      if (aProjection.NbPoints() == 0)
+      {
+        done = false;
+        return done;
+      }
+      UIntPC1 = aProjection.LowerDistanceParameter();
+    }
+    if (Fd2->Interference(IFaCo2).PCurveOnFace().IsNull())
+    {
+      Geom2dAPI_ProjectPointOnCurve aProjection(PGc2->Value(aCommonEnd),
+                                                Fd2->Interference(IFaCo2).PCurveOnSurf());
+      if (aProjection.NbPoints() == 0)
+      {
+        done = false;
+        return done;
+      }
+      UIntPC2 = aProjection.LowerDistanceParameter();
+    }
     // CornerData are updated with results of the intersection.
     double              WFirst = Gc->FirstParameter();
     double              WLast  = Gc->LastParameter();
@@ -440,7 +466,7 @@ bool ChFi3d_Builder::PerformTwoCornerbyInter(const int Index)
     }
     const ChFiDS_CommonPoint& cparc = Fd1->Vertex(isfirst1, IFaArc1);
     ChFi3d_EnlargeBox(cparc.Arc(), myEFMap(cparc.Arc()), cparc.ParameterOnArc(), barc);
-    ChFi3d_SetPointTolerance(DStr, barc, Corner1->IndexPoint(isfirst1, IFaArc1));
+    ChFi3d_SetPointTolerance(DStr, barc, Corner1->IndexPoint(isfirst1, IFaArc1), cparc.IsVertex());
     ChFi3d_SetPointTolerance(DStr, bco, Corner1->IndexPoint(isfirst1, IFaCo1));
   }
   else
@@ -584,6 +610,28 @@ bool ChFi3d_Builder::PerformTwoCornerbyInter(const int Index)
 #endif
       done = false;
       return done;
+    }
+    if (SmaFD->Interference(IFaCoSma).PCurveOnFace().IsNull())
+    {
+      Geom2dAPI_ProjectPointOnCurve aProjection(PGc1->Value(Gc->FirstParameter()),
+                                                SmaFD->Interference(IFaCoSma).PCurveOnSurf());
+      if (aProjection.NbPoints() == 0)
+      {
+        done = false;
+        return done;
+      }
+      UIntPCSma = aProjection.LowerDistanceParameter();
+    }
+    if (BigFD->Interference(IFaCoBig).PCurveOnFace().IsNull())
+    {
+      Geom2dAPI_ProjectPointOnCurve aProjection(PGc2->Value(Gc->FirstParameter()),
+                                                BigFD->Interference(IFaCoBig).PCurveOnSurf());
+      if (aProjection.NbPoints() == 0)
+      {
+        done = false;
+        return done;
+      }
+      UIntPCBig = aProjection.LowerDistanceParameter();
     }
     // SmaCD is updated, for it this is all.
     double              WFirst = Gc->FirstParameter();
@@ -754,7 +802,7 @@ bool ChFi3d_Builder::PerformTwoCornerbyInter(const int Index)
       DStr.ChangeCurveInterferences(ICurv);
     Interfp = ChFi3d_FilPointInDS(TopAbs_FORWARD, ICurv, IpointMil, WFirst);
     Li7.Append(Interfp);
-    Interfp = ChFi3d_FilPointInDS(TopAbs_REVERSED, ICurv, IpointArc, WLast);
+    Interfp = ChFi3d_FilPointInDS(TopAbs_REVERSED, ICurv, IpointArc, WLast, cpend.IsVertex());
     Li7.Append(Interfp);
     Interfc = ChFi3d_FilCurveInDS(ICurv, ISurf, PGc2, tracurv);
     DStr.ChangeSurfaceInterferences(ISurf).Append(Interfc);
@@ -799,7 +847,10 @@ bool ChFi3d_Builder::PerformTwoCornerbyInter(const int Index)
 
     ChFi3d_SetPointTolerance(DStr, bco, SmaCD->IndexPoint(isfirstSma, IFaCoSma));
     ChFi3d_SetPointTolerance(DStr, bmil, SmaCD->IndexPoint(isfirstSma, IFaArcSma));
-    ChFi3d_SetPointTolerance(DStr, barc, BigCD->IndexPoint(isfirstBig, IFaArcBig));
+    ChFi3d_SetPointTolerance(DStr,
+                             barc,
+                             BigCD->IndexPoint(isfirstBig, IFaArcBig),
+                             cparc.IsVertex());
   }
   done = true;
 

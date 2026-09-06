@@ -17,7 +17,11 @@
 #include <TopOpeBRepDS_BuildTool.hxx>
 
 #include <BRep_Tool.hxx>
+#include <BOPTools_AlgoTools2D.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <GeomAdaptor_Curve.hxx>
+#include <ShapeConstruct_ProjectCurveOnSurface.hxx>
+#include <BRepLib_CheckCurveOnSurface.hxx>
 #include <ElCLib.hxx>
 #include <Geom2d_BSplineCurve.hxx>
 #include <Geom2d_Conic.hxx>
@@ -1265,10 +1269,54 @@ void TopOpeBRepDS_BuildTool::PCurve(TopoDS_Shape&                    F,
     TopLoc_Location         L;
     double                  Cf, Cl;
     occ::handle<Geom_Curve> C = BRep_Tool::Curve(EE, L, Cf, Cl);
+    if (!CDS.ExistingEdge().IsNull() && !C.IsNull()
+        && GeomAdaptor_Curve(C).GetType() >= GeomAbs_BezierCurve)
+    {
+      double aFirst, aLast;
+      if (!BRep_Tool::CurveOnSurface(CDS.ExistingEdge(), FF, aFirst, aLast).IsNull())
+      {
+        return;
+      }
+    }
+
+    if (!C.IsNull() && C != CDS.Curve()
+        && ((CDS.EquivalentCurve() == 0 && CDS.ExistingEdge().IsNull())
+            || GeomAdaptor_Curve(C).GetType() >= GeomAbs_BezierCurve))
+    {
+      // A shared split or reused restriction may have a different, nonlinear
+      // parameterization from the generated trace. SameRange only rescales
+      // the interval. The ShapeConstruct projector handles closed B-spline
+      // surfaces without extrapolating across their closing parameter seam.
+      if (GeomAdaptor_Curve(C).GetType() >= GeomAbs_BezierCurve)
+      {
+        const double tolerance = std::max(BRep_Tool::Tolerance(EE), CDS.Tolerance());
+        ShapeConstruct_ProjectCurveOnSurface projector;
+        projector.Init(BRep_Tool::Surface(FF), tolerance);
+        const auto                curve = BRep_Tool::Curve(EE, Cf, Cl);
+        occ::handle<Geom2d_Curve> projected;
+        if (projector.Perform(curve, Cf, Cl, projected))
+        {
+          myBuilder.UpdateEdge(EE, projected, FF, tolerance);
+          // Isoparametric projection can succeed without preserving a nonlinear
+          // parameterization (for example, a rational circle on a cylinder).
+          // Validate the claimed SameParameter result before accepting it.
+          BRepLib_CheckCurveOnSurface check(EE, FF);
+          check.Perform();
+          if (check.IsDone() && check.MaxDistance() <= tolerance)
+          {
+            return;
+          }
+          // The Boolean projector skips edges that already have a pcurve.
+          myBuilder.UpdateEdge(EE, occ::handle<Geom2d_Curve>(), FF, tolerance);
+        }
+      }
+      BOPTools_AlgoTools2D::BuildPCurveForEdgeOnFace(EE, FF);
+      return;
+    }
 
     if (!C.IsNull())
     {
-      if (rangedef && (CDS.IsExistingEdgeReversed() || CDS.IsEquivalentCurveReversed()))
+      if (rangedef && (CDS.IsExistingEdgeReversed() != CDS.IsEquivalentCurveReversed()))
       {
         occ::handle<Geom2d_TrimmedCurve> aReversedPCurve =
           new Geom2d_TrimmedCurve(PCT, CDSmin, CDSmax);
@@ -1280,6 +1328,13 @@ void TopOpeBRepDS_BuildTool::PCurve(TopoDS_Shape&                    F,
                            Cf,
                            Cl,
                            PCT);
+      }
+      else if (rangedef
+               && (!CDS.ExistingEdge().IsNull() || (CDS.EquivalentCurve() > 0 && C != CDS.Curve())))
+      {
+        // Equivalent curves can have different parameter origins even when
+        // they run in the same direction.
+        GeomLib::SameRange(Precision::PConfusion(), PCT, CDSmin, CDSmax, Cf, Cl, PCT);
       }
       else
       {
@@ -1309,7 +1364,16 @@ void TopOpeBRepDS_BuildTool::PCurve(TopoDS_Shape&                    F,
       }
     }
 
-    TopOpeBRepDS_SetThePCurve(myBuilder, EE, FF, E.Orientation(), PCT);
+    // A copied restriction already carries pcurves. Updating its non-seam
+    // representation must not add a second pcurve and turn it into a seam.
+    if (!CDS.ExistingEdge().IsNull() && !BRep_Tool::IsClosed(CDS.ExistingEdge(), FF))
+    {
+      myBuilder.UpdateEdge(EE, PCT, FF, Precision::Confusion());
+    }
+    else
+    {
+      TopOpeBRepDS_SetThePCurve(myBuilder, EE, FF, E.Orientation(), PCT);
+    }
   }
 }
 

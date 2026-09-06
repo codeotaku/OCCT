@@ -18,8 +18,14 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepTools.hxx>
+#include <BRep_Tool.hxx>
+#include <IntTools_EdgeEdge.hxx>
+#include <IntTools_Context.hxx>
 #include <BRepTopAdaptor_FClass2d.hxx>
 #include <Geom2d_Line.hxx>
+#include <Geom2dInt_GInter.hxx>
+#include <Geom2dAdaptor_Curve.hxx>
+#include <IntRes2d_IntersectionSegment.hxx>
 #include <Geom2d_TrimmedCurve.hxx>
 #include <Geom_Curve.hxx>
 #include <Geom_Surface.hxx>
@@ -56,6 +62,42 @@
 const double PAR_T = 0.43213918;
 
 //=================================================================================================
+
+bool TopOpeBRepBuild_Tools::HasCompleteCoincidence(const Geom2dInt_GInter&    theIntersector,
+                                                   const Geom2dAdaptor_Curve& theFirstCurve,
+                                                   const Geom2dAdaptor_Curve& theSecondCurve,
+                                                   const double               theTolerance,
+                                                   bool&                      theIsReversed)
+{
+  if (theIntersector.NbSegments() != 1)
+  {
+    return false;
+  }
+
+  const IntRes2d_IntersectionSegment& aSegment = theIntersector.Segment(1);
+  if (!aSegment.HasFirstPoint() || !aSegment.HasLastPoint())
+  {
+    return false;
+  }
+
+  const double aFirstOnFirst  = aSegment.FirstPoint().ParamOnFirst();
+  const double aLastOnFirst   = aSegment.LastPoint().ParamOnFirst();
+  const double aFirstOnSecond = aSegment.FirstPoint().ParamOnSecond();
+  const double aLastOnSecond  = aSegment.LastPoint().ParamOnSecond();
+  const bool   isComplete =
+    std::abs(std::min(aFirstOnFirst, aLastOnFirst) - theFirstCurve.FirstParameter()) <= theTolerance
+    && std::abs(std::max(aFirstOnFirst, aLastOnFirst) - theFirstCurve.LastParameter())
+         <= theTolerance
+    && std::abs(std::min(aFirstOnSecond, aLastOnSecond) - theSecondCurve.FirstParameter())
+         <= theTolerance
+    && std::abs(std::max(aFirstOnSecond, aLastOnSecond) - theSecondCurve.LastParameter())
+         <= theTolerance;
+  if (isComplete)
+  {
+    theIsReversed = (aLastOnFirst - aFirstOnFirst) * (aLastOnSecond - aFirstOnSecond) < 0.0;
+  }
+  return isComplete;
+}
 
 void TopOpeBRepBuild_Tools::FindState(
   const TopoDS_Shape&                                                       aSubsh,
@@ -923,4 +965,53 @@ void TopOpeBRepBuild_Tools::CorrectFace2d(
 
   aCorrectFace2d.Perform();
   corrFace = oldFace;
+}
+
+//=================================================================================================
+
+// Complete coincidence must cover both ranges, not just a tangential contact.
+bool TopOpeBRepBuild_Tools::AreCoincidentEdges(const TopoDS_Edge& theFirst,
+                                               const TopoDS_Edge& theSecond,
+                                               bool&              theIsReversed)
+{
+  IntTools_EdgeEdge anIntersection;
+  anIntersection.SetEdge1(theFirst);
+  anIntersection.SetEdge2(theSecond);
+  anIntersection.Perform();
+  if (!anIntersection.IsDone() || anIntersection.CommonParts().Length() != 1)
+  {
+    return false;
+  }
+  const auto& aPart = anIntersection.CommonParts().First();
+  if (aPart.Type() != TopAbs_EDGE || aPart.Ranges2().Length() != 1)
+  {
+    return false;
+  }
+  const BRepAdaptor_Curve aC1(theFirst), aC2(theSecond);
+  const double aTol  = std::max(BRep_Tool::Tolerance(theFirst), BRep_Tool::Tolerance(theSecond));
+  const double aRes1 = aC1.Resolution(aTol), aRes2 = aC2.Resolution(aTol);
+  if (std::abs(aPart.Range1().First() - aC1.FirstParameter()) > aRes1
+      || std::abs(aPart.Range1().Last() - aC1.LastParameter()) > aRes1
+      || std::abs(aPart.Ranges2().First().First() - aC2.FirstParameter()) > aRes2
+      || std::abs(aPart.Ranges2().First().Last() - aC2.LastParameter()) > aRes2)
+  {
+    return false;
+  }
+  gp_Pnt aPoint, aPoint2;
+  gp_Vec aTangent, aTangent2;
+  aC1.D1((aC1.FirstParameter() + aC1.LastParameter()) * .5, aPoint, aTangent);
+  double           aParameter;
+  IntTools_Context aContext;
+  if (!aContext.ProjectPointOnEdge(aPoint, theSecond, aParameter))
+  {
+    return false;
+  }
+  aC2.D1(aParameter, aPoint2, aTangent2);
+  if (aTangent.SquareMagnitude() <= gp::Resolution()
+      || aTangent2.SquareMagnitude() <= gp::Resolution())
+  {
+    return false;
+  }
+  theIsReversed = aTangent.Dot(aTangent2) < 0.;
+  return true;
 }

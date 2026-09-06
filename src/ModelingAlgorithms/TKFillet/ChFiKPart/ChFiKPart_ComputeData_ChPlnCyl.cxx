@@ -28,6 +28,7 @@
 #include <Geom_CylindricalSurface.hxx>
 #include <Geom_Line.hxx>
 #include <Geom_Plane.hxx>
+#include <Standard_ConstructionError.hxx>
 #include <gp.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
@@ -149,13 +150,14 @@ bool ChFiKPart_MakeChamfer(TopOpeBRepDS_DataStructure&         DStr,
     if (std::abs(Rad) <= Precision::Confusion())
     {
       pointu = true;
+      Rad    = 0.0;
     }
     if (Rad < 0)
     {
 #ifdef OCCT_DEBUG
       std::cout << "the chamfer can't pass" << std::endl;
 #endif
-      return false;
+      throw Standard_ConstructionError("Chamfer distance exceeds cylinder radius");
     }
   }
   else
@@ -234,6 +236,20 @@ bool ChFiKPart_MakeChamfer(TopOpeBRepDS_DataStructure&         DStr,
     gp_Ax22d  ax2dPln(pt2dPln, gp_Dir2d(gp_Vec2d(pt2dPln, p2dPln)), d2d);
     gp_Circ2d cir2dPln(ax2dPln, Rad);
     GCir2dPln = new Geom2d_Circle(cir2dPln);
+  }
+  else
+  {
+    // At the radius limit the planar contact is a point, not a pcurve.
+    // SplitKPart still needs its actual support coordinates for classification.
+    const gp_Pnt2d aUnused;
+    if (plandab)
+    {
+      Data->Set2dPoints(pt2dPln, pt2dPln, aUnused, aUnused);
+    }
+    else
+    {
+      Data->Set2dPoints(aUnused, aUnused, pt2dPln, pt2dPln);
+    }
   }
 
   // pcurve on the chamfer

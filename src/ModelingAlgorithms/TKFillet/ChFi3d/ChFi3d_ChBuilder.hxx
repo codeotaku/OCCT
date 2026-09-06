@@ -52,6 +52,9 @@ public:
   //! computation of chamfers
   Standard_EXPORT ChFi3d_ChBuilder(const TopoDS_Shape& S, const double Ta = 1.0e-2);
 
+  //! Computes the chamfer and rejects invalid consumed-boundary topology.
+  Standard_EXPORT void Compute();
+
   //! initializes a contour with the edge <E> as first
   //! (the next are found by propagation ).
   //! The two distances (parameters of the chamfer) must

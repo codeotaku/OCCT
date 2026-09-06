@@ -2,6 +2,10 @@
 set(OCCT_TKBool_GTests_FILES_LOCATION "${CMAKE_CURRENT_LIST_DIR}")
 
 set(OCCT_TKBool_GTests_FILES
+  TopOpeBRepBuild_ClosedRestriction_Test.cxx
+  TopOpeBRepBuild_Coincidence_Test.cxx
+  TopOpeBRepBuild_CompleteCoincidence_Test.cxx
+  TopOpeBRepDS_SharedPCurve_Test.cxx
   BRepAlgo_AsDes_Test.cxx
   BRepAlgoAPI_Cut_Test.cxx
   BRepAlgoAPI_Fuse_Test.cxx

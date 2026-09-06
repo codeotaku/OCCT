@@ -18,6 +18,7 @@
 #include <Blend_FuncInv.hxx>
 #include <BRepBlend_Line.hxx>
 #include <BRepLib.hxx>
+#include <BRepLib_CheckCurveOnSurface.hxx>
 #include <BRepTopAdaptor_TopolTool.hxx>
 #include <ChFi3d_Builder.hxx>
 #include <ChFi3d_Builder_0.hxx>
@@ -510,8 +511,54 @@ void ChFi3d_Builder::Compute()
       for (; aIt.More(); aIt.Next())
       {
         const TopoDS_Shape& aF = aIt.Value();
-        BRepLib::SameParameter(aF, SameParTol, true);
+        // Keep a verified non-analytic parameterization: forcing it through
+        // SameParameter again can replace an accurate projected pcurve with
+        // a less accurate approximation. Analytic edges retain the old path.
+        for (TopExp_Explorer anEdgeIt(aF, TopAbs_EDGE); anEdgeIt.More(); anEdgeIt.Next())
+        {
+          const TopoDS_Edge& anEdge     = TopoDS::Edge(anEdgeIt.Current());
+          bool               isVerified = false;
+          if (BRep_Tool::SameRange(anEdge) && BRep_Tool::SameParameter(anEdge)
+              && !BRep_Tool::Degenerated(anEdge)
+              && BRepAdaptor_Curve(anEdge).GetType() >= GeomAbs_BezierCurve)
+          {
+            BRepLib_CheckCurveOnSurface aCheck(anEdge, TopoDS::Face(aF));
+            aCheck.Perform();
+            isVerified = aCheck.IsDone() && aCheck.MaxDistance() <= BRep_Tool::Tolerance(anEdge);
+          }
+          BRepLib::SameParameter(anEdge, SameParTol, !isVerified);
+        }
+        BRepLib::SameParameter(aF, SameParTol, false);
         ShapeFix::SameParameter(aF, false, SameParTol);
+      }
+    }
+    // SameParameter estimates tolerances by sampling. After all new faces have
+    // been processed, account for extrema between those samples as well.
+    // Do this last: a subsequent SameParameter on an adjacent face can otherwise
+    // replace the tolerance of their shared edge with a sampled estimate again.
+    BRep_Builder aBuilder;
+    // New edges also bound trimmed original support faces. Their pcurve error
+    // there can exceed the error on the generated blend surface.
+    for (TopExp_Explorer aFaceIt(myShapeResult, TopAbs_FACE); aFaceIt.More(); aFaceIt.Next())
+    {
+      const TopoDS_Face& aFace = TopoDS::Face(aFaceIt.Current());
+      for (TopExp_Explorer anExp(aFace, TopAbs_EDGE); anExp.More(); anExp.Next())
+      {
+        const TopoDS_Edge& anEdge = TopoDS::Edge(anExp.Current());
+        if (BRep_Tool::Degenerated(anEdge) || !BRep_Tool::SameParameter(anEdge))
+        {
+          continue;
+        }
+        BRepLib_CheckCurveOnSurface aCheck(anEdge, aFace);
+        aCheck.Perform();
+        if (aCheck.IsDone() && aCheck.MaxDistance() > BRep_Tool::Tolerance(anEdge))
+        {
+          aBuilder.UpdateEdge(anEdge, aCheck.MaxDistance());
+          for (TopExp_Explorer aVertex(anEdge, TopAbs_VERTEX); aVertex.More(); aVertex.Next())
+          {
+            aBuilder.UpdateVertex(TopoDS::Vertex(aVertex.Current()), aCheck.MaxDistance());
+          }
+        }
       }
     }
   }

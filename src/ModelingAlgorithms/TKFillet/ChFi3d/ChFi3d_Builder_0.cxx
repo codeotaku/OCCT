@@ -24,11 +24,14 @@
 #include <Approx_SameParameter.hxx>
 #include <BRepLib.hxx>
 #include <BRepTools.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <TopOpeBRepBuild_Tools.hxx>
 #include <BRepTopAdaptor_HVertex.hxx>
 #include <BRepTopAdaptor_TopolTool.hxx>
 #include <BRep_Builder.hxx>
 #include <ChFi3d.hxx>
 #include <ChFiDS_FilSpine.hxx>
+#include <ChFiDS_ChamfSpine.hxx>
 #include <ElCLib.hxx>
 #include <ElSLib.hxx>
 #include <Extrema_LocateExtCC.hxx>
@@ -47,6 +50,7 @@
 #include <GeomAPI_PointsToBSpline.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <Extrema_ExtPC.hxx>
 #include <GeomConvert.hxx>
 #include <GeomConvert_CompCurveToBSplineCurve.hxx>
 #include <GeomFill_SimpleBound.hxx>
@@ -312,7 +316,10 @@ static occ::handle<Adaptor3d_Surface> Geometry(TopOpeBRepDS_DataStructure& DStr,
 
 //=================================================================================================
 
-void ChFi3d_SetPointTolerance(TopOpeBRepDS_DataStructure& DStr, const Bnd_Box& box, const int IP)
+void ChFi3d_SetPointTolerance(TopOpeBRepDS_DataStructure& DStr,
+                              const Bnd_Box&              box,
+                              const int                   IP,
+                              const bool                  theIsVertex)
 {
   double a, b, c, d, e, f, vtol;
   box.Get(a, b, c, d, e, f);
@@ -323,7 +330,14 @@ void ChFi3d_SetPointTolerance(TopOpeBRepDS_DataStructure& DStr, const Bnd_Box& b
   e *= e;
   f *= f;
   vtol = sqrt(d + e + f) * 1.5; // on prend un petit rab.
-  DStr.ChangePoint(IP).Tolerance(vtol);
+  if (theIsVertex)
+  {
+    BRep_Builder().UpdateVertex(TopoDS::Vertex(DStr.Shape(IP)), vtol);
+  }
+  else
+  {
+    DStr.ChangePoint(IP).Tolerance(vtol);
+  }
 }
 
 //=================================================================================================
@@ -971,7 +985,8 @@ bool ChFi3d_IsInFront(TopOpeBRepDS_DataStructure&       DStr,
                          sens2,
                          P2d,
                          Check2dDistance,
-                         enlarge))
+                         enlarge,
+                         &face))
     {
       u1 = p1;
       u2 = p2;
@@ -1023,7 +1038,8 @@ bool ChFi3d_IsInFront(TopOpeBRepDS_DataStructure&       DStr,
                          sens2,
                          P2d,
                          Check2dDistance,
-                         enlarge))
+                         enlarge,
+                         &face))
     {
       bool restore =
         ok && ((j1 == jf1 && sens1 * (p1 - u1) > 0.) || (j2 == jf2 && sens2 * (p2 - u2) > 0.));
@@ -1099,7 +1115,8 @@ bool ChFi3d_IsInFront(TopOpeBRepDS_DataStructure&       DStr,
                          sens2,
                          P2d,
                          Check2dDistance,
-                         enlarge))
+                         enlarge,
+                         &face))
     {
       bool restore =
         ok && ((j1 == jf1 && sens1 * (p1 - u1) > 0.) || (j2 == jf2 && sens2 * (p2 - u2) > 0.));
@@ -1175,7 +1192,8 @@ bool ChFi3d_IsInFront(TopOpeBRepDS_DataStructure&       DStr,
                          sens2,
                          P2d,
                          Check2dDistance,
-                         enlarge))
+                         enlarge,
+                         &face))
     {
       bool restore =
         ok && ((j1 == jf1 && sens1 * (p1 - u1) > 0.) || (j2 == jf2 && sens2 * (p2 - u2) > 0.));
@@ -1239,8 +1257,81 @@ bool ChFi3d_IntTraces(const occ::handle<ChFiDS_SurfData>& fd1,
                       const int                           sens2,
                       const gp_Pnt2d&                     RefP2d,
                       const bool                          Check2dDistance,
-                      const bool                          enlarge)
+                      const bool                          enlarge,
+                      const TopoDS_Face*                  theSupport)
 {
+  const bool isPoint1 = fd1->Interference(jf1).PCurveOnFace().IsNull();
+  const bool isPoint2 = fd2->Interference(jf2).PCurveOnFace().IsNull();
+  if (isPoint1 || isPoint2)
+  {
+    // A singular contact trace has no support pcurve. Validate its collapsed
+    // endpoints and project onto the other existing trace in 3D.
+    if (theSupport == nullptr || theSupport->IsNull())
+    {
+      return false;
+    }
+    if ((isPoint1 && fd1->Interference(jf1).PCurveOnSurf().IsNull())
+        || (isPoint2 && fd2->Interference(jf2).PCurveOnSurf().IsNull()))
+    {
+      return false;
+    }
+    const auto&  aPointFD   = isPoint1 ? fd1 : fd2;
+    const int    aPointSide = isPoint1 ? jf1 : jf2;
+    const auto&  aFirst     = aPointFD->Vertex(true, aPointSide);
+    const auto&  aLast      = aPointFD->Vertex(false, aPointSide);
+    const double aTolerance =
+      std::max(Precision::Confusion(), std::max(aFirst.Tolerance(), aLast.Tolerance()));
+    if (aFirst.Point().SquareDistance(aLast.Point()) > aTolerance * aTolerance)
+    {
+      return false;
+    }
+    p1 = pref1;
+    p2 = pref2;
+    if (isPoint1 && isPoint2)
+    {
+      return aFirst.Point().SquareDistance(fd2->Vertex(true, jf2).Point())
+               <= aTolerance * aTolerance
+             && aFirst.Point().SquareDistance(fd2->Vertex(false, jf2).Point())
+                  <= aTolerance * aTolerance;
+    }
+    const auto& aCurveFI  = (isPoint1 ? fd2 : fd1)->Interference(isPoint1 ? jf2 : jf1);
+    double      aFirstPar = aCurveFI.FirstParameter(), aLastPar = aCurveFI.LastParameter();
+    if (aLastPar - aFirstPar < Precision::PConfusion())
+    {
+      return false;
+    }
+    if (enlarge)
+    {
+      const double anExtension = std::min(0.1, 0.05 * (aLastPar - aFirstPar));
+      aFirstPar -= anExtension;
+      aLastPar += anExtension;
+    }
+    occ::handle<Geom2dAdaptor_Curve> aPCurve =
+      new Geom2dAdaptor_Curve(aCurveFI.PCurveOnFace(), aFirstPar, aLastPar);
+    occ::handle<BRepAdaptor_Surface> aSurface = new BRepAdaptor_Surface(*theSupport);
+    Adaptor3d_CurveOnSurface         aTrace(aPCurve, aSurface);
+    Extrema_ExtPC                    anExtrema(aFirst.Point(), aTrace, aTolerance);
+    if (!anExtrema.IsDone())
+    {
+      return false;
+    }
+    int    anIndex   = 0;
+    double aDistance = aTolerance * aTolerance;
+    for (int anExtremumIndex = 1; anExtremumIndex <= anExtrema.NbExt(); ++anExtremumIndex)
+    {
+      if (anExtrema.SquareDistance(anExtremumIndex) <= aDistance)
+      {
+        aDistance = anExtrema.SquareDistance(anExtremumIndex);
+        anIndex   = anExtremumIndex;
+      }
+    }
+    if (anIndex == 0)
+    {
+      return false;
+    }
+    (isPoint1 ? p2 : p1) = anExtrema.Point(anIndex).Parameter();
+    return true;
+  }
   Geom2dAdaptor_Curve C1;
   Geom2dAdaptor_Curve C2;
   // pcurves are enlarged to be sure that there is intersection
@@ -3353,6 +3444,14 @@ bool ChFi3d_HasTransversalIntersection(const Geom2dInt_GInter& theIntersector)
     const IntRes2d_IntersectionPoint& aPoint      = theIntersector.Point(anIndex);
     const IntRes2d_TypeTrans          aFirstType  = aPoint.TransitionOfFirst().TransitionType();
     const IntRes2d_TypeTrans          aSecondType = aPoint.TransitionOfSecond().TransitionType();
+    if (aPoint.TransitionOfFirst().PositionOnCurve() != IntRes2d_Middle
+        || aPoint.TransitionOfSecond().PositionOnCurve() != IntRes2d_Middle)
+    {
+      // Endpoint contacts, including an endpoint in the other curve's interior,
+      // do not cross both bounded curves. The topology builder splits such
+      // T-junctions before assembling the trimmed faces.
+      continue;
+    }
     if (aFirstType == IntRes2d_In || aFirstType == IntRes2d_Out || aSecondType == IntRes2d_In
         || aSecondType == IntRes2d_Out)
     {
@@ -3364,41 +3463,6 @@ bool ChFi3d_HasTransversalIntersection(const Geom2dInt_GInter& theIntersector)
 
 //=======================================================================
 
-static bool ChFi3d_HasCompleteCoincidence(const Geom2dInt_GInter&    theIntersector,
-                                          const Geom2dAdaptor_Curve& theFirstCurve,
-                                          const Geom2dAdaptor_Curve& theSecondCurve,
-                                          const double               theTolerance,
-                                          bool*                      theIsReversed)
-{
-  if (theIntersector.NbSegments() != 1)
-  {
-    return false;
-  }
-
-  const IntRes2d_IntersectionSegment& aSegment = theIntersector.Segment(1);
-  if (!aSegment.HasFirstPoint() || !aSegment.HasLastPoint())
-  {
-    return false;
-  }
-
-  const double aFirstOnFirst  = aSegment.FirstPoint().ParamOnFirst();
-  const double aLastOnFirst   = aSegment.LastPoint().ParamOnFirst();
-  const double aFirstOnSecond = aSegment.FirstPoint().ParamOnSecond();
-  const double aLastOnSecond  = aSegment.LastPoint().ParamOnSecond();
-  const bool   isComplete =
-    std::abs(std::min(aFirstOnFirst, aLastOnFirst) - theFirstCurve.FirstParameter()) <= theTolerance
-    && std::abs(std::max(aFirstOnFirst, aLastOnFirst) - theFirstCurve.LastParameter())
-         <= theTolerance
-    && std::abs(std::min(aFirstOnSecond, aLastOnSecond) - theSecondCurve.FirstParameter())
-         <= theTolerance
-    && std::abs(std::max(aFirstOnSecond, aLastOnSecond) - theSecondCurve.LastParameter())
-         <= theTolerance;
-  if (isComplete && theIsReversed != nullptr)
-  {
-    *theIsReversed = (aLastOnFirst - aFirstOnFirst) * (aLastOnSecond - aFirstOnSecond) < 0.0;
-  }
-  return isComplete;
-}
 
 //=======================================================================
 
@@ -3545,9 +3609,38 @@ void ChFi3d_StripeEdgeInter(const occ::handle<ChFiDS_Stripe>& theStripe1,
                                    aFI2.LastParameter());
       anIntersector.Perform(aPCurve1, aPCurve2, tol2d, Precision::PConfusion());
       bool isReversed = false;
-      if (ChFi3d_HasCompleteCoincidence(anIntersector, aPCurve1, aPCurve2, tol2d, &isReversed))
+      bool isCoincident = TopOpeBRepBuild_Tools::HasCompleteCoincidence(anIntersector,
+                                                                        aPCurve1,
+                                                                        aPCurve2,
+                                                                        tol2d,
+                                                                        isReversed);
+      if (!isCoincident && !theStripe1->Spine().IsNull() && !theStripe2->Spine().IsNull()
+          && theStripe1->Spine()->IsKind(STANDARD_TYPE(ChFiDS_ChamfSpine))
+          && theStripe2->Spine()->IsKind(STANDARD_TYPE(ChFiDS_ChamfSpine)))
+      {
+        // Independently approximated chamfer traces may cross each other in UV
+        // within their reached 3D tolerances. Use the common-part facility also
+        // used to recognize consumed restrictions, not a second coincidence solver.
+        const auto&             aCurve1 = DStr.Curve(aFI1.LineIndex());
+        const auto&             aCurve2 = DStr.Curve(aFI2.LineIndex());
+        BRepBuilderAPI_MakeEdge aMaker1(aCurve1.Curve(),
+                                        aFI1.FirstParameter(),
+                                        aFI1.LastParameter());
+        BRepBuilderAPI_MakeEdge aMaker2(aCurve2.Curve(),
+                                        aFI2.FirstParameter(),
+                                        aFI2.LastParameter());
+        if (aMaker1.IsDone() && aMaker2.IsDone())
+        {
+          BRep_Builder().UpdateEdge(aMaker1.Edge(), aCurve1.Tolerance());
+          BRep_Builder().UpdateEdge(aMaker2.Edge(), aCurve2.Tolerance());
+          isCoincident =
+            TopOpeBRepBuild_Tools::AreCoincidentEdges(aMaker1.Edge(), aMaker2.Edge(), isReversed);
+        }
+      }
+      if (isCoincident)
       {
         DStr.MergeEquivalentCurves(aFI1.LineIndex(), aFI2.LineIndex(), isReversed);
+        continue;
       }
       if (ChFi3d_HasTransversalIntersection(anIntersector))
       {
@@ -4175,20 +4268,33 @@ bool ChFi3d_ComputeCurves(const occ::handle<Adaptor3d_Surface>& S1,
               Ul = C3d->LastParameter();
               ChFi3d_ReparamPcurv(Uf, Ul, Pc1);
               ChFi3d_ReparamPcurv(Uf, Ul, Pc2);
-              double x, y;
-              Pc1->Value(Uf).Coord(x, y);
-              x = Pardeb(1) - x;
-              y = Pardeb(2) - y;
-              if (std::abs(x) > tol2d || std::abs(y) > tol2d)
+              // Intersection pcurves already describe the correct 3D curve.
+              // At a pole the supplied U coordinate is not unique: translating
+              // by that arbitrary difference rotates the entire trace off the
+              // intersection. Only whole-period shifts preserve its geometry.
+              const occ::handle<Adaptor3d_Surface> aSurfaces[2] = {S1, S2};
+              const occ::handle<Geom2d_Curve>      aPCurves[2]  = {Pc1, Pc2};
+              for (int aSurfaceIndex = 0; aSurfaceIndex < 2; ++aSurfaceIndex)
               {
-                Pc1->Translate(gp_Vec2d(x, y));
-              }
-              Pc2->Value(Uf).Coord(x, y);
-              x = Pardeb(3) - x;
-              y = Pardeb(4) - y;
-              if (std::abs(x) > tol2d || std::abs(y) > tol2d)
-              {
-                Pc2->Translate(gp_Vec2d(x, y));
+                const gp_Pnt2d aStart = aPCurves[aSurfaceIndex]->Value(Uf);
+                gp_Vec2d       aShift(0.0, 0.0);
+                if (aSurfaces[aSurfaceIndex]->IsUPeriodic())
+                {
+                  const double aHalfPeriod = 0.5 * aSurfaces[aSurfaceIndex]->UPeriod();
+                  aShift.SetX(ElCLib::InPeriod(aStart.X(),
+                                               Pardeb(2 * aSurfaceIndex + 1) - aHalfPeriod,
+                                               Pardeb(2 * aSurfaceIndex + 1) + aHalfPeriod)
+                              - aStart.X());
+                }
+                if (aSurfaces[aSurfaceIndex]->IsVPeriodic())
+                {
+                  const double aHalfPeriod = 0.5 * aSurfaces[aSurfaceIndex]->VPeriod();
+                  aShift.SetY(ElCLib::InPeriod(aStart.Y(),
+                                               Pardeb(2 * aSurfaceIndex + 2) - aHalfPeriod,
+                                               Pardeb(2 * aSurfaceIndex + 2) + aHalfPeriod)
+                              - aStart.Y());
+                }
+                aPCurves[aSurfaceIndex]->Translate(aShift);
               }
               tolreached = ChFi3d_EvalTolReached(S1, Pc1, S2, Pc2, C3d);
               return true;

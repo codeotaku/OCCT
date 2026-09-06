@@ -42,6 +42,7 @@
 #include <gp_Vec.hxx>
 #include <IntAna_QuadQuadGeo.hxx>
 #include <Precision.hxx>
+#include <Standard_ConstructionError.hxx>
 #include <TopOpeBRepDS_DataStructure.hxx>
 
 // pour tester
@@ -155,13 +156,14 @@ bool ChFiKPart_MakeChAsym(TopOpeBRepDS_DataStructure&         DStr,
     if (std::abs(Rad) <= Precision::Confusion())
     {
       pointu = true;
+      Rad    = 0.0;
     }
     if (Rad < 0)
     {
 #ifdef OCCT_DEBUG
       std::cout << "the chamfer can't pass" << std::endl;
 #endif
-      return false;
+      throw Standard_ConstructionError("Chamfer distance exceeds cylinder radius");
     }
   }
   else

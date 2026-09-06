@@ -37,12 +37,29 @@ class TopoDS_Face;
 class TopoDS_Edge;
 class gp_Vec;
 class TopoDS_Wire;
+class Geom2dInt_GInter;
+class Geom2dAdaptor_Curve;
 
 //! Auxiliary methods used in TopOpeBRepBuild_Builder1 class
 class TopOpeBRepBuild_Tools
 {
 public:
   DEFINE_STANDARD_ALLOC
+
+  //! Whether one bounded intersection segment covers both complete parameter
+  //! ranges. theTolerance is parametric, not a distance in 3D. No intersection
+  //! or projection is performed here; callers supply an existing result.
+  Standard_EXPORT static bool HasCompleteCoincidence(const Geom2dInt_GInter&    theIntersector,
+                                                     const Geom2dAdaptor_Curve& theFirstCurve,
+                                                     const Geom2dAdaptor_Curve& theSecondCurve,
+                                                     const double               theTolerance,
+                                                     bool&                      theIsReversed);
+
+  //! Check complete coincidence of both bounded edges with IntTools_EdgeEdge,
+  //! using their reached tolerances. Return their relative curve direction.
+  Standard_EXPORT static bool AreCoincidentEdges(const TopoDS_Edge& theFirst,
+                                                 const TopoDS_Edge& theSecond,
+                                                 bool&              theIsReversed);
 
   Standard_EXPORT static void FindState(
     const TopoDS_Shape&                                                       aVertex,

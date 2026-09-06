@@ -26,6 +26,7 @@
 #include <BRepBlend_Line.hxx>
 #include <BRepBlend_Walking.hxx>
 #include <BRepTools.hxx>
+#include <BRepCheck_Analyzer.hxx>
 #include <ChFi3d.hxx>
 #include <ChFi3d_Builder_0.hxx>
 #include <ChFi3d_ChBuilder.hxx>
@@ -191,6 +192,15 @@ ChFi3d_ChBuilder::ChFi3d_ChBuilder(const TopoDS_Shape& S, const double Ta)
     : ChFi3d_Builder(S, Ta)
 {
   myMode = ChFiDS_ClassicChamfer;
+}
+
+//=================================================================================================
+
+void ChFi3d_ChBuilder::Compute()
+{
+  ChFi3d_Builder::Compute();
+  // A completed build may still contain invalid consumed-boundary topology.
+  done = IsDone() && BRepCheck_Analyzer(Shape()).IsValid();
 }
 
 //=======================================================================

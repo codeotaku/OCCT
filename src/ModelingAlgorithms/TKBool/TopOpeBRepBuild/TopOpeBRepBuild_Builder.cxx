@@ -15,6 +15,7 @@
 // commercial license or contractual agreement.
 
 #include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepTools_ReShape.hxx>
 #include <Geom_Curve.hxx>
 #include <gp_Pnt.hxx>
 #include <Precision.hxx>
@@ -83,43 +84,25 @@ Standard_EXPORT void debspf(const int i)
 
 static TopoDS_Shape SubstituteCoincidentEdges(
   const TopoDS_Shape&                                                             theShape,
-  const NCollection_DataMap<TopoDS_Shape, TopoDS_Shape, TopTools_ShapeMapHasher>& theEdges,
-  const TopOpeBRepDS_BuildTool&                                                   theBuildTool)
+  const NCollection_DataMap<TopoDS_Shape, TopoDS_Shape, TopTools_ShapeMapHasher>& theEdges)
 {
   if (theShape.ShapeType() != TopAbs_FACE && theShape.ShapeType() != TopAbs_WIRE)
   {
     return theShape;
   }
 
-  TopoDS_Shape aCopy      = theShape.EmptyCopied();
-  bool         isModified = false;
-  for (TopoDS_Iterator anIt(theShape, false, false); anIt.More(); anIt.Next())
+  // The map contains located edges. ReShape accumulates parent locations while
+  // traversing wires, unlike a local-coordinate iterator, and preserves edge use
+  // orientations while rebuilding only affected ancestors.
+  BRepTools_ReShape aReShape;
+  for (NCollection_DataMap<TopoDS_Shape, TopoDS_Shape, TopTools_ShapeMapHasher>::Iterator anIt(
+         theEdges);
+       anIt.More();
+       anIt.Next())
   {
-    TopoDS_Shape aSubShape = anIt.Value();
-    if (aSubShape.ShapeType() == TopAbs_EDGE && theEdges.IsBound(aSubShape))
-    {
-      const TopAbs_Orientation anOrientation = aSubShape.Orientation();
-      aSubShape                              = theEdges(aSubShape);
-      aSubShape.Orientation(anOrientation);
-      isModified = true;
-    }
-    else if (aSubShape.ShapeType() == TopAbs_WIRE)
-    {
-      TopoDS_Shape aNewWire = SubstituteCoincidentEdges(aSubShape, theEdges, theBuildTool);
-      isModified            = isModified || !aNewWire.IsSame(aSubShape);
-      aSubShape             = aNewWire;
-    }
-
-    if (theShape.ShapeType() == TopAbs_FACE)
-    {
-      theBuildTool.AddFaceWire(aCopy, aSubShape);
-    }
-    else
-    {
-      theBuildTool.AddWireEdge(aCopy, aSubShape);
-    }
+    aReShape.Replace(anIt.Key().Oriented(TopAbs_FORWARD), anIt.Value().Oriented(TopAbs_FORWARD));
   }
-  return isModified ? aCopy : theShape;
+  return aReShape.Apply(theShape, TopAbs_EDGE);
 }
 
 //=================================================================================================
@@ -173,44 +156,88 @@ occ::handle<TopOpeBRepDS_HDataStructure> TopOpeBRepBuild_Builder::DataStructure(
 //=================================================================================================
 
 static void FillEquivalentCurveOrientationMasks(
-  const TopoDS_Shape&                             theFace,
-  const TopAbs_State                              theState,
-  const bool                                      theReverse,
-  const occ::handle<TopOpeBRepDS_HDataStructure>& theDataStructure,
-  NCollection_FlatDataMap<int, int>&              theOrientationMasks)
+  const TopoDS_Shape&                                              theFace,
+  const TopAbs_State                                               theState,
+  const bool                                                       theReverse,
+  const occ::handle<TopOpeBRepDS_HDataStructure>&                  theDataStructure,
+  const TopOpeBRepBuild_Builder&                                   theBuilder,
+  NCollection_DataMap<TopoDS_Shape, int, TopTools_ShapeMapHasher>& theOrientationMasks)
 {
-  for (TopOpeBRepDS_CurveIterator aCurveIt(theDataStructure->FaceCurves(theFace)); aCurveIt.More();
-       aCurveIt.Next())
+  NCollection_Map<TopoDS_Shape, TopTools_ShapeMapHasher> aClosedRestrictions;
+  for (TopExp_Explorer aWire(theFace.Oriented(TopAbs_FORWARD), TopAbs_WIRE); aWire.More();
+       aWire.Next())
   {
-    const int aReferenceCurve = theDataStructure->Curve(aCurveIt.Current()).EquivalentCurve();
-    if (aReferenceCurve <= 0)
+    if (!BRep_Tool::IsClosed(aWire.Current()))
     {
       continue;
     }
-
+    bool allReused = true;
+    for (TopExp_Explorer anEdge(aWire.Current(), TopAbs_EDGE); anEdge.More(); anEdge.Next())
+    {
+      bool found = false;
+      for (TopOpeBRepDS_CurveIterator it(theDataStructure->FaceCurves(theFace)); it.More();
+           it.Next())
+      {
+        const auto& restriction = theDataStructure->Curve(it.Current()).ExistingEdge();
+        if (!restriction.IsNull() && restriction.IsSame(anEdge.Current()))
+        {
+          found = true;
+          break;
+        }
+      }
+      if (!found)
+      {
+        allReused = false;
+        break;
+      }
+    }
+    if (allReused)
+    {
+      for (TopExp_Explorer anEdge(aWire.Current(), TopAbs_EDGE); anEdge.More(); anEdge.Next())
+      {
+        aClosedRestrictions.Add(anEdge.Current());
+      }
+    }
+  }
+  for (TopOpeBRepDS_CurveIterator aCurveIt(theDataStructure->FaceCurves(theFace)); aCurveIt.More();
+       aCurveIt.Next())
+  {
     TopAbs_Orientation anOrientation =
       TopOpeBRepBuild_Builder::Orient(aCurveIt.Orientation(theState), theReverse);
-    if (theDataStructure->Curve(aCurveIt.Current()).IsEquivalentCurveReversed())
+    if (theDataStructure->Curve(aCurveIt.Current()).IsEquivalentCurveReversed()
+        != theDataStructure->Curve(aCurveIt.Current()).IsExistingEdgeReversed())
     {
       anOrientation = TopAbs::Reverse(anOrientation);
     }
-    int anOrientationMask =
-      theOrientationMasks.IsBound(aReferenceCurve) ? theOrientationMasks(aReferenceCurve) : 0;
-    if (anOrientation == TopAbs_FORWARD)
+    for (const TopoDS_Shape& anEdge : theBuilder.NewEdges(aCurveIt.Current()))
     {
-      anOrientationMask |= 1;
-    }
-    else if (anOrientation == TopAbs_REVERSED)
-    {
-      anOrientationMask |= 2;
-    }
-    if (theOrientationMasks.IsBound(aReferenceCurve))
-    {
-      theOrientationMasks.ChangeFind(aReferenceCurve) = anOrientationMask;
-    }
-    else
-    {
-      theOrientationMasks.Bind(aReferenceCurve, anOrientationMask);
+      const auto ori =
+        anEdge.Orientation() == TopAbs_REVERSED ? TopAbs::Reverse(anOrientation) : anOrientation;
+      const int mask = ori == TopAbs_FORWARD ? 1 : ori == TopAbs_REVERSED ? 2 : 0;
+      if (theOrientationMasks.IsBound(anEdge))
+      {
+        theOrientationMasks.ChangeFind(anEdge) |= mask;
+      }
+      else
+      {
+        theOrientationMasks.Bind(anEdge, mask);
+      }
+      const TopoDS_Edge& aRestriction = theDataStructure->Curve(aCurveIt.Current()).ExistingEdge();
+      if (!aRestriction.IsNull() && aClosedRestrictions.Contains(aRestriction))
+      {
+        for (TopExp_Explorer it(theFace.Oriented(TopAbs_FORWARD), TopAbs_EDGE); it.More();
+             it.Next())
+        {
+          if (it.Current().IsSame(aRestriction))
+          {
+            const auto aBoundaryOrientation =
+              TopOpeBRepBuild_Builder::Orient(it.Current().Orientation(), theReverse);
+            theOrientationMasks.ChangeFind(anEdge) |= aBoundaryOrientation == TopAbs_FORWARD    ? 1
+                                                      : aBoundaryOrientation == TopAbs_REVERSED ? 2
+                                                                                                : 0;
+          }
+        }
+      }
     }
   }
 }
@@ -219,24 +246,49 @@ static void FillEquivalentCurveOrientationMasks(
 
 static bool IsConsumedByCoincidentCurves(
   const TopoDS_Shape&                             theFace,
-  const occ::handle<TopOpeBRepDS_HDataStructure>& theDataStructure)
+  const occ::handle<TopOpeBRepDS_HDataStructure>& theDataStructure,
+  const TopOpeBRepBuild_Builder&                  theBuilder)
 {
+  // A partially coincident boundary can leave several separate face regions.
+  // Do not apply whole-curve consumption to just one of its split intervals.
+  bool hasSplitCurve = false;
+  for (TopOpeBRepDS_CurveIterator it(theDataStructure->FaceCurves(theFace)); it.More(); it.Next())
+  {
+    if (theBuilder.NewEdges(it.Current()).Extent() > 1)
+    {
+      hasSplitCurve = true;
+    }
+  }
   for (int aStateIndex = 0; aStateIndex < 2; ++aStateIndex)
   {
     const TopAbs_State                aState = aStateIndex == 0 ? TopAbs_IN : TopAbs_OUT;
-    NCollection_FlatDataMap<int, int> anOrientationMasks;
+    NCollection_DataMap<TopoDS_Shape, int, TopTools_ShapeMapHasher> anOrientationMasks;
     FillEquivalentCurveOrientationMasks(theFace,
                                         aState,
                                         false,
                                         theDataStructure,
+                                        theBuilder,
                                         anOrientationMasks);
-    for (NCollection_FlatDataMap<int, int>::Iterator anIt(anOrientationMasks); anIt.More();
+    bool allConsumed = true;
+    bool hasConsumed = false;
+    for (NCollection_DataMap<TopoDS_Shape, int, TopTools_ShapeMapHasher>::Iterator anIt(
+           anOrientationMasks);
+         anIt.More();
          anIt.Next())
     {
-      if (anIt.Value() == 3)
+      if (anIt.Value() == 3 && !hasSplitCurve)
       {
         return true;
       }
+      hasConsumed = hasConsumed || anIt.Value() == 3;
+      if (anIt.Value() != 3 && anIt.Value() != 0)
+      {
+        allConsumed = false;
+      }
+    }
+    if (allConsumed && hasConsumed)
+    {
+      return true;
     }
   }
   return false;
@@ -287,7 +339,7 @@ void TopOpeBRepBuild_Builder::Perform(const occ::handle<TopOpeBRepDS_HDataStruct
   {
     const TopoDS_Shape& aShape = HDS->Shape(aShapeIndex, false);
     if (!aShape.IsNull() && aShape.ShapeType() == TopAbs_FACE
-        && IsConsumedByCoincidentCurves(aShape, HDS))
+        && IsConsumedByCoincidentCurves(aShape, HDS, *this))
     {
       myConsumedFaces.Bind(aShape, true);
       RegisterConsumedFaceEdges(aShape, aReusedRestrictionEdges, myConsumedFaceEdges);
@@ -322,11 +374,12 @@ void TopOpeBRepBuild_Builder::AddIntersectionEdges(TopoDS_Shape&             aFa
                                                    const bool                RevOri1,
                                                    TopOpeBRepBuild_ShapeSet& WES) const
 {
-  NCollection_FlatDataMap<int, int> aConsumedCurveGroups;
+  NCollection_DataMap<TopoDS_Shape, int, TopTools_ShapeMapHasher> aConsumedCurveGroups;
   FillEquivalentCurveOrientationMasks(aFace,
                                       ToBuild1,
                                       RevOri1,
                                       myDataStructure,
+                                      *this,
                                       aConsumedCurveGroups);
 
   TopoDS_Shape               anEdge;
@@ -338,9 +391,7 @@ void TopOpeBRepBuild_Builder::AddIntersectionEdges(TopoDS_Shape&             aFa
     for (NCollection_List<TopoDS_Shape>::Iterator Iti(LnewE); Iti.More(); Iti.Next())
     {
       anEdge                    = Iti.Value();
-      const int aReferenceCurve = myDataStructure->Curve(iC).EquivalentCurve();
-      if (aReferenceCurve > 0 && aConsumedCurveGroups.IsBound(aReferenceCurve)
-          && aConsumedCurveGroups(aReferenceCurve) == 3)
+      if (aConsumedCurveGroups.IsBound(anEdge) && aConsumedCurveGroups(anEdge) == 3)
       {
         continue;
       }
@@ -361,7 +412,12 @@ void TopOpeBRepBuild_Builder::AddIntersectionEdges(TopoDS_Shape&             aFa
       }
       TopAbs_Orientation ori    = FCurves.Orientation(ToBuild1);
       TopAbs_Orientation newori = Orient(ori, RevOri1);
-      if (myDataStructure->Curve(iC).IsEquivalentCurveReversed())
+      if (anEdge.Orientation() == TopAbs_REVERSED)
+      {
+        newori = TopAbs::Reverse(newori);
+      }
+      if (myDataStructure->Curve(iC).IsEquivalentCurveReversed()
+          != myDataStructure->Curve(iC).IsExistingEdgeReversed())
       {
         newori = TopAbs::Reverse(newori);
       }
@@ -1769,6 +1825,7 @@ void TopOpeBRepBuild_Builder::SplitSolid(const TopoDS_Shape& S1oriented,
 
   // Add the intersection surfaces
   // -----------------------------
+  const bool needsStartFace = SFS.StartElements().IsEmpty();
   if (myDataStructure->NbSurfaces() > 0)
   {
     TopOpeBRepDS_SurfaceIterator SSurfaces = myDataStructure->SolidSurfaces(S1forward);
@@ -1782,7 +1839,16 @@ void TopOpeBRepBuild_Builder::SplitSolid(const TopoDS_Shape& S1oriented,
         TopAbs_Orientation ori   = SSurfaces.Orientation(ToBuild1);
         myBuildTool.Orientation(aFace, ori);
 
-        SFS.AddElement(aFace);
+        // A limiting operation can consume every split source face. Generated
+        // faces must also seed reconstruction when no source start face remains.
+        if (needsStartFace)
+        {
+          SFS.AddStartElement(aFace);
+        }
+        else
+        {
+          SFS.AddElement(aFace);
+        }
       }
     }
   }
@@ -1855,13 +1921,60 @@ void TopOpeBRepBuild_Builder::SplitShapes(TopOpeBRepTool_ShapeExplorer& Ex,
   for (; Ex.More(); Ex.Next())
   {
     aShape = Ex.Current();
-    const bool isConsumedFaceEdge =
+    bool isConsumedFaceEdge =
       aShape.ShapeType() == TopAbs_EDGE && myConsumedFaceEdges.IsBound(aShape);
 
     // compute new orientation <newori> to give to the new shapes
     newori = Orient(myBuildTool.Orientation(aShape), RevOri);
 
+    if (aShape.ShapeType() == TopAbs_EDGE)
+    {
+      const auto* aWireSet = dynamic_cast<const TopOpeBRepBuild_WireEdgeSet*>(&aSet);
+      if (aWireSet != nullptr)
+      {
+        for (TopOpeBRepDS_CurveIterator aCurveIt(myDataStructure->FaceCurves(aWireSet->Face()));
+             aCurveIt.More();
+             aCurveIt.Next())
+        {
+          const TopOpeBRepDS_Curve& aCurve = myDataStructure->Curve(aCurveIt.Current());
+          if (aCurve.ExistingEdge().IsNull() || !aCurve.ExistingEdge().IsSame(aShape))
+          {
+            continue;
+          }
+          TopAbs_Orientation anOrientation = Orient(aCurveIt.Orientation(ToBuild1), RevOri);
+          if (aCurve.IsEquivalentCurveReversed() != aCurve.IsExistingEdgeReversed())
+          {
+            anOrientation = TopAbs::Reverse(anOrientation);
+          }
+          if ((newori == TopAbs_FORWARD || newori == TopAbs_REVERSED)
+              && anOrientation == TopAbs::Reverse(newori))
+          {
+            isConsumedFaceEdge = true;
+          }
+        }
+      }
+    }
+
     TopAbs_ShapeEnum t = aShape.ShapeType();
+    if (t == TopAbs_EDGE && myCoincidentEdges.IsBound(aShape))
+    {
+      if (!isConsumedFaceEdge)
+      {
+        const auto aReplacement = myCoincidentEdges(aShape).Oriented(newori);
+        if (aReplacement.ShapeType() == TopAbs_WIRE)
+        {
+          for (TopExp_Explorer it(aReplacement, TopAbs_EDGE); it.More(); it.Next())
+          {
+            aSet.AddStartElement(it.Current());
+          }
+        }
+        else
+        {
+          aSet.AddStartElement(aReplacement);
+        }
+      }
+      continue;
+    }
 
     if (t == TopAbs_SOLID || t == TopAbs_SHELL)
     {
@@ -1907,7 +2020,7 @@ void TopOpeBRepBuild_Builder::SplitShapes(TopOpeBRepTool_ShapeExplorer& Ex,
           continue;
         }
         newShape = It.Value();
-        newShape = SubstituteCoincidentEdges(newShape, myCoincidentEdges, myBuildTool);
+        newShape = SubstituteCoincidentEdges(newShape, myCoincidentEdges);
         myBuildTool.Orientation(newShape, newori);
 #ifdef OCCT_DEBUG
 //	TopAbs_ShapeEnum tns = TopType(newShape);
@@ -2002,7 +2115,7 @@ void TopOpeBRepBuild_Builder::SplitShapes(TopOpeBRepTool_ShapeExplorer& Ex,
       }
       if (add && !isConsumedFaceEdge)
       {
-        aShape = SubstituteCoincidentEdges(aShape, myCoincidentEdges, myBuildTool);
+        aShape = SubstituteCoincidentEdges(aShape, myCoincidentEdges);
         myBuildTool.Orientation(aShape, newori);
         aSet.AddElement(aShape);
       }
@@ -2073,7 +2186,7 @@ void TopOpeBRepBuild_Builder::FillShape(const TopoDS_Shape&                   S1
       if (keep)
       {
         newori    = Orient(myBuildTool.Orientation(aSubShape), RevOri);
-        aSubShape = SubstituteCoincidentEdges(aSubShape, myCoincidentEdges, myBuildTool);
+        aSubShape = SubstituteCoincidentEdges(aSubShape, myCoincidentEdges);
         myBuildTool.Orientation(aSubShape, newori);
         aSet.AddShape(aSubShape);
       }

@@ -41,6 +41,9 @@
 #include <ElCLib.hxx>
 #include <Extrema_ExtCC.hxx>
 #include <Extrema_ExtPC.hxx>
+#include <GeomAPI_ProjectPointOnSurf.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
+#include <GeomLib_IsPlanarSurface.hxx>
 #include <Extrema_ExtPS.hxx>
 #include <Extrema_LocateExtCC.hxx>
 #include <Extrema_POnCurv.hxx>
@@ -1438,198 +1441,234 @@ void ChFi3d_Builder::PerformOneCorner(const int Index, const bool thePrepareOnSa
       }
     }
 
-    occ::handle<Geom2d_Curve> Hc;
-#ifdef VARIANT1
-    parVtx = BRep_Tool::Parameter(Vtx, Arcprol);
-#else
-    parVtx = BRep_Tool::Parameter(V2, Arcprol);
-#endif
-    const ChFiDS_FaceInterference& Fiop = Fd->Interference(IFopArc);
-    gp_Pnt2d                       pop1, pop2, pv1, pv2;
-    Hc = BRep_Tool::CurveOnSurface(Arcprol, Fop, Ubid, Ubid);
-    if (Hc.IsNull())
+    // The OnSame intersection may lie inside the existing restriction rather
+    // than beyond its corner. In that case, adding a connector from Vtx makes
+    // an overlapping, oppositely traversed edge in both adjacent face wires.
+    // Register the common point on the restriction so the existing edge builder
+    // trims it, instead of introducing another curve over the retained edge.
+    double                        aFirst, aLast;
+    const occ::handle<Geom_Curve> aRestriction = BRep_Tool::Curve(Arcprol, aFirst, aLast);
+    // The common point was recomputed by IntersUpdateOnSame; its stored
+    // tolerance is not updated until the endpoint boxes are reconciled below.
+    const double aTolerance =
+      std::max(tolapp3d, BRep_Tool::Tolerance(Arcprol) + CPopArc.Tolerance());
+    bool toTrimRestriction = false;
+    if (!aRestriction.IsNull())
     {
-      throw Standard_ConstructionError("Failed to get p-curve of edge");
-    }
-    pop1 = Hc->Value(parVtx);
-    pop2 = Fiop.PCurveOnFace()->Value(Fiop.Parameter(isfirst));
-    Hc   = BRep_Tool::CurveOnSurface(Arcprol, Fv, Ubid, Ubid);
-    if (Hc.IsNull())
-    {
-      throw Standard_ConstructionError("Failed to get p-curve of edge");
-    }
-    pv1 = Hc->Value(parVtx);
-    pv2 = p2dbout;
-    ChFi3d_Recale(Bs, pv1, pv2, true);
-    NCollection_Array1<double> Pardeb(1, 4), Parfin(1, 4);
-    Pardeb(1) = pop1.X();
-    Pardeb(2) = pop1.Y();
-    Pardeb(3) = pv1.X();
-    Pardeb(4) = pv1.Y();
-    Parfin(1) = pop2.X();
-    Parfin(2) = pop2.Y();
-    Parfin(3) = pv2.X();
-    Parfin(4) = pv2.Y();
-    double uu1, uu2, vv1, vv2;
-    ChFi3d_Boite(pv1, pv2, uu1, uu2, vv1, vv2);
-    ChFi3d_BoundFac(Bs, uu1, uu2, vv1, vv2);
-    ChFi3d_Boite(pop1, pop2, uu1, uu2, vv1, vv2);
-    ChFi3d_BoundFac(Bop, uu1, uu2, vv1, vv2);
-
-    occ::handle<Geom_Curve>   zob3d;
-    occ::handle<Geom2d_Curve> zob2dop, zob2dv;
-    // double tolreached;
-    if (!ChFi3d_ComputeCurves(HBop,
-                              HBs,
-                              Pardeb,
-                              Parfin,
-                              zob3d,
-                              zob2dop,
-                              zob2dv,
-                              tolapp3d,
-                              tol2d,
-                              tolreached))
-    {
-      throw Standard_Failure("OneCorner : echec calcul intersection");
-    }
-
-    Udeb = zob3d->FirstParameter();
-    Ufin = zob3d->LastParameter();
-    TopOpeBRepDS_Curve Zob(zob3d, tolreached);
-    int                IZob = DStr.AddCurve(Zob);
-
-    // it is determined if Fop has an edge of sewing
-    // it is determined if the curve has an intersection with the edge of sewing
-
-    // TopoDS_Edge edgecouture;
-    // bool couture;
-    ChFi3d_Couture(Fop, couture, edgecouture);
-
-    if (couture && !BRep_Tool::Degenerated(edgecouture))
-    {
-      BRepLib_MakeEdge  Bedge(zob3d);
-      TopoDS_Edge       edg = Bedge.Edge();
-      BRepExtrema_ExtCC extCC(edgecouture, edg);
-      if (extCC.IsDone() && extCC.NbExt() != 0)
+      GeomAPI_ProjectPointOnCurve aProjection(CPopArc.Point(), aRestriction, aFirst, aLast);
+      if (aProjection.NbPoints() > 0 && aProjection.LowerDistance() <= aTolerance)
       {
-        for (int i = 1; i <= extCC.NbExt() && !intcouture; i++)
+        const double aParameter      = aProjection.LowerDistanceParameter();
+        const double aParamTolerance = BRepAdaptor_Curve(Arcprol).Resolution(aTolerance);
+        if (aParameter > aFirst + aParamTolerance && aParameter < aLast - aParamTolerance)
         {
-          if (extCC.SquareDistance(i) <= 1.e-8)
+          const int anArcIndex = DStr.AddShape(Arcprol);
+          DStr.ChangeShapeInterferences(anArcIndex)
+            .Append(ChFi3d_FilPointInDS(OVtx,
+                                        anArcIndex,
+                                        stripe->IndexPoint(isfirst, IFopArc),
+                                        aParameter,
+                                        CPopArc.IsVertex()));
+          toTrimRestriction = true;
+          (IFopArc == 1 ? box1 : box2).Add(aProjection.NearestPoint());
+        }
+      }
+    }
+    if (!toTrimRestriction)
+    {
+      occ::handle<Geom2d_Curve> Hc;
+#ifdef VARIANT1
+      parVtx = BRep_Tool::Parameter(Vtx, Arcprol);
+#else
+      parVtx = BRep_Tool::Parameter(V2, Arcprol);
+#endif
+      const ChFiDS_FaceInterference& Fiop = Fd->Interference(IFopArc);
+      gp_Pnt2d                       pop1, pop2, pv1, pv2;
+      Hc = BRep_Tool::CurveOnSurface(Arcprol, Fop, Ubid, Ubid);
+      if (Hc.IsNull())
+      {
+        throw Standard_ConstructionError("Failed to get p-curve of edge");
+      }
+      pop1 = Hc->Value(parVtx);
+      pop2 = Fiop.PCurveOnFace()->Value(Fiop.Parameter(isfirst));
+      Hc   = BRep_Tool::CurveOnSurface(Arcprol, Fv, Ubid, Ubid);
+      if (Hc.IsNull())
+      {
+        throw Standard_ConstructionError("Failed to get p-curve of edge");
+      }
+      pv1 = Hc->Value(parVtx);
+      pv2 = p2dbout;
+      ChFi3d_Recale(Bs, pv1, pv2, true);
+      NCollection_Array1<double> Pardeb(1, 4), Parfin(1, 4);
+      Pardeb(1) = pop1.X();
+      Pardeb(2) = pop1.Y();
+      Pardeb(3) = pv1.X();
+      Pardeb(4) = pv1.Y();
+      Parfin(1) = pop2.X();
+      Parfin(2) = pop2.Y();
+      Parfin(3) = pv2.X();
+      Parfin(4) = pv2.Y();
+      double uu1, uu2, vv1, vv2;
+      ChFi3d_Boite(pv1, pv2, uu1, uu2, vv1, vv2);
+      ChFi3d_BoundFac(Bs, uu1, uu2, vv1, vv2);
+      ChFi3d_Boite(pop1, pop2, uu1, uu2, vv1, vv2);
+      ChFi3d_BoundFac(Bop, uu1, uu2, vv1, vv2);
+
+      occ::handle<Geom_Curve>   zob3d;
+      occ::handle<Geom2d_Curve> zob2dop, zob2dv;
+      // double tolreached;
+      if (!ChFi3d_ComputeCurves(HBop,
+                                HBs,
+                                Pardeb,
+                                Parfin,
+                                zob3d,
+                                zob2dop,
+                                zob2dv,
+                                tolapp3d,
+                                tol2d,
+                                tolreached))
+      {
+        throw Standard_Failure("OneCorner : echec calcul intersection");
+      }
+
+      Udeb = zob3d->FirstParameter();
+      Ufin = zob3d->LastParameter();
+      TopOpeBRepDS_Curve Zob(zob3d, tolreached);
+      int                IZob = DStr.AddCurve(Zob);
+
+      // it is determined if Fop has an edge of sewing
+      // it is determined if the curve has an intersection with the edge of sewing
+
+      // TopoDS_Edge edgecouture;
+      // bool couture;
+      ChFi3d_Couture(Fop, couture, edgecouture);
+
+      if (couture && !BRep_Tool::Degenerated(edgecouture))
+      {
+        BRepLib_MakeEdge  Bedge(zob3d);
+        TopoDS_Edge       edg = Bedge.Edge();
+        BRepExtrema_ExtCC extCC(edgecouture, edg);
+        if (extCC.IsDone() && extCC.NbExt() != 0)
+        {
+          for (int i = 1; i <= extCC.NbExt() && !intcouture; i++)
           {
-            par1                  = extCC.ParameterOnE1(i);
-            par2                  = extCC.ParameterOnE2(i);
-            gp_Pnt             P1 = extCC.PointOnE1(i);
-            TopOpeBRepDS_Point tpoint(P1, 1.e-4);
-            indpt      = DStr.AddPoint(tpoint);
-            intcouture = true;
-            curv1      = new Geom_TrimmedCurve(zob3d, Udeb, par2);
-            curv2      = new Geom_TrimmedCurve(zob3d, par2, Ufin);
-            TopOpeBRepDS_Curve tcurv1(curv1, tolreached);
-            TopOpeBRepDS_Curve tcurv2(curv2, tolreached);
-            Icurv1 = DStr.AddCurve(tcurv1);
-            Icurv2 = DStr.AddCurve(tcurv2);
+            if (extCC.SquareDistance(i) <= 1.e-8)
+            {
+              par1                  = extCC.ParameterOnE1(i);
+              par2                  = extCC.ParameterOnE2(i);
+              gp_Pnt             P1 = extCC.PointOnE1(i);
+              TopOpeBRepDS_Point tpoint(P1, 1.e-4);
+              indpt      = DStr.AddPoint(tpoint);
+              intcouture = true;
+              curv1      = new Geom_TrimmedCurve(zob3d, Udeb, par2);
+              curv2      = new Geom_TrimmedCurve(zob3d, par2, Ufin);
+              TopOpeBRepDS_Curve tcurv1(curv1, tolreached);
+              TopOpeBRepDS_Curve tcurv2(curv2, tolreached);
+              Icurv1 = DStr.AddCurve(tcurv1);
+              Icurv2 = DStr.AddCurve(tcurv2);
+            }
           }
         }
       }
-    }
-    if (intcouture)
-    {
+      if (intcouture)
+      {
 
-      // interference of curv1 and curv2 on Ishape
-      Et = TopAbs::Reverse(TopAbs::Compose(OVtx, OArcprolv));
-      ComputeCurve2d(curv1, Fop, c2d1);
-      occ::handle<TopOpeBRepDS_SurfaceCurveInterference> InterFv =
-        ChFi3d_FilCurveInDS(Icurv1, IShape, /*zob2dv*/ c2d1, Et);
-      DStr.ChangeShapeInterferences(IShape).Append(InterFv);
-      ComputeCurve2d(curv2, Fop, c2d2);
-      InterFv = ChFi3d_FilCurveInDS(Icurv2, IShape, /*zob2dv*/ c2d2, Et);
-      DStr.ChangeShapeInterferences(IShape).Append(InterFv);
+        // interference of curv1 and curv2 on Ishape
+        Et = TopAbs::Reverse(TopAbs::Compose(OVtx, OArcprolv));
+        ComputeCurve2d(curv1, Fop, c2d1);
+        occ::handle<TopOpeBRepDS_SurfaceCurveInterference> InterFv =
+          ChFi3d_FilCurveInDS(Icurv1, IShape, /*zob2dv*/ c2d1, Et);
+        DStr.ChangeShapeInterferences(IShape).Append(InterFv);
+        ComputeCurve2d(curv2, Fop, c2d2);
+        InterFv = ChFi3d_FilCurveInDS(Icurv2, IShape, /*zob2dv*/ c2d2, Et);
+        DStr.ChangeShapeInterferences(IShape).Append(InterFv);
 
-      // limitation of the sewing edge
-      int                                              Iarc = DStr.AddShape(edgecouture);
-      occ::handle<TopOpeBRepDS_CurvePointInterference> Interfedge;
-      TopAbs_Orientation                               ori;
-      TopoDS_Vertex                                    Vdeb, Vfin;
-      Vdeb = TopExp::FirstVertex(edgecouture);
-      Vfin = TopExp::LastVertex(edgecouture);
-      double pard, parf;
-      pard = BRep_Tool::Parameter(Vdeb, edgecouture);
-      parf = BRep_Tool::Parameter(Vfin, edgecouture);
-      if (std::abs(par1 - pard) < std::abs(parf - par1))
-      {
-        ori = TopAbs_REVERSED;
-      }
-      else
-      {
-        ori = TopAbs_FORWARD;
-      }
-      Interfedge = ChFi3d_FilPointInDS(ori, Iarc, indpt, par1);
-      DStr.ChangeShapeInterferences(Iarc).Append(Interfedge);
-
-      //  interference of curv1 and curv2 on Iop
-      int Iop = DStr.AddShape(Fop);
-      Et      = TopAbs::Reverse(TopAbs::Compose(OVtx, OArcprolop));
-      occ::handle<TopOpeBRepDS_SurfaceCurveInterference> Interfop;
-      ComputeCurve2d(curv1, Fop, c2d1);
-      Interfop = ChFi3d_FilCurveInDS(Icurv1, Iop, c2d1, Et);
-      DStr.ChangeShapeInterferences(Iop).Append(Interfop);
-      ComputeCurve2d(curv2, Fop, c2d2);
-      Interfop = ChFi3d_FilCurveInDS(Icurv2, Iop, c2d2, Et);
-      DStr.ChangeShapeInterferences(Iop).Append(Interfop);
-      occ::handle<TopOpeBRepDS_CurvePointInterference> interfprol =
-        ChFi3d_FilVertexInDS(TopAbs_FORWARD, Icurv1, IVtx, Udeb);
-      DStr.ChangeCurveInterferences(Icurv1).Append(interfprol);
-      interfprol = ChFi3d_FilPointInDS(TopAbs_REVERSED, Icurv1, indpt, par2);
-      DStr.ChangeCurveInterferences(Icurv1).Append(interfprol);
-      int icc    = stripe->IndexPoint(isfirst, IFopArc);
-      interfprol = ChFi3d_FilPointInDS(TopAbs_FORWARD, Icurv2, indpt, par2);
-      DStr.ChangeCurveInterferences(Icurv2).Append(interfprol);
-      interfprol = ChFi3d_FilPointInDS(TopAbs_REVERSED, Icurv2, icc, Ufin);
-      DStr.ChangeCurveInterferences(Icurv2).Append(interfprol);
-    }
-    else
-    {
-      Et = TopAbs::Reverse(TopAbs::Compose(OVtx, OArcprolv));
-      occ::handle<TopOpeBRepDS_SurfaceCurveInterference> InterFv =
-        ChFi3d_FilCurveInDS(IZob, IShape, zob2dv, Et);
-      DStr.ChangeShapeInterferences(IShape).Append(InterFv);
-      Et = TopAbs::Reverse(TopAbs::Compose(OVtx, OArcprolop));
-      int                                                Iop = DStr.AddShape(Fop);
-      occ::handle<TopOpeBRepDS_SurfaceCurveInterference> Interfop =
-        ChFi3d_FilCurveInDS(IZob, Iop, zob2dop, Et);
-      DStr.ChangeShapeInterferences(Iop).Append(Interfop);
-      occ::handle<TopOpeBRepDS_CurvePointInterference> interfprol;
-#ifdef VARIANT1
-      interfprol = ChFi3d_FilVertexInDS(TopAbs_FORWARD, IZob, IVtx, Udeb);
-#else
-      {
-        int IV2    = DStr.AddShape(V2); // VARIANT 2
-        interfprol = ChFi3d_FilVertexInDS(TopAbs_FORWARD, IZob, IV2, Udeb);
-      }
-#endif
-      DStr.ChangeCurveInterferences(IZob).Append(interfprol);
-      int icc    = stripe->IndexPoint(isfirst, IFopArc);
-      interfprol = ChFi3d_FilPointInDS(TopAbs_REVERSED, IZob, icc, Ufin);
-      DStr.ChangeCurveInterferences(IZob).Append(interfprol);
-#ifdef VARIANT1
-      {
-        if (IFopArc == 1)
+        // limitation of the sewing edge
+        int                                              Iarc = DStr.AddShape(edgecouture);
+        occ::handle<TopOpeBRepDS_CurvePointInterference> Interfedge;
+        TopAbs_Orientation                               ori;
+        TopoDS_Vertex                                    Vdeb, Vfin;
+        Vdeb = TopExp::FirstVertex(edgecouture);
+        Vfin = TopExp::LastVertex(edgecouture);
+        double pard, parf;
+        pard = BRep_Tool::Parameter(Vdeb, edgecouture);
+        parf = BRep_Tool::Parameter(Vfin, edgecouture);
+        if (std::abs(par1 - pard) < std::abs(parf - par1))
         {
-          box1.Add(zob3d->Value(Ufin));
+          ori = TopAbs_REVERSED;
         }
         else
         {
-          box2.Add(zob3d->Value(Ufin));
+          ori = TopAbs_FORWARD;
         }
+        Interfedge = ChFi3d_FilPointInDS(ori, Iarc, indpt, par1);
+        DStr.ChangeShapeInterferences(Iarc).Append(Interfedge);
+
+        //  interference of curv1 and curv2 on Iop
+        int Iop = DStr.AddShape(Fop);
+        Et      = TopAbs::Reverse(TopAbs::Compose(OVtx, OArcprolop));
+        occ::handle<TopOpeBRepDS_SurfaceCurveInterference> Interfop;
+        ComputeCurve2d(curv1, Fop, c2d1);
+        Interfop = ChFi3d_FilCurveInDS(Icurv1, Iop, c2d1, Et);
+        DStr.ChangeShapeInterferences(Iop).Append(Interfop);
+        ComputeCurve2d(curv2, Fop, c2d2);
+        Interfop = ChFi3d_FilCurveInDS(Icurv2, Iop, c2d2, Et);
+        DStr.ChangeShapeInterferences(Iop).Append(Interfop);
+        occ::handle<TopOpeBRepDS_CurvePointInterference> interfprol =
+          ChFi3d_FilVertexInDS(TopAbs_FORWARD, Icurv1, IVtx, Udeb);
+        DStr.ChangeCurveInterferences(Icurv1).Append(interfprol);
+        interfprol = ChFi3d_FilPointInDS(TopAbs_REVERSED, Icurv1, indpt, par2);
+        DStr.ChangeCurveInterferences(Icurv1).Append(interfprol);
+        int icc    = stripe->IndexPoint(isfirst, IFopArc);
+        interfprol = ChFi3d_FilPointInDS(TopAbs_FORWARD, Icurv2, indpt, par2);
+        DStr.ChangeCurveInterferences(Icurv2).Append(interfprol);
+        interfprol = ChFi3d_FilPointInDS(TopAbs_REVERSED, Icurv2, icc, Ufin);
+        DStr.ChangeCurveInterferences(Icurv2).Append(interfprol);
       }
-#else
+      else
       {
-        // cut off existing Arcprol
-        int iArcprol = DStr.AddShape(Arcprol);
-        interfprol   = ChFi3d_FilPointInDS(OVtx, iArcprol, icc, Udeb);
-        DStr.ChangeShapeInterferences(Arcprol).Append(interfprol);
-      }
+        Et = TopAbs::Reverse(TopAbs::Compose(OVtx, OArcprolv));
+        occ::handle<TopOpeBRepDS_SurfaceCurveInterference> InterFv =
+          ChFi3d_FilCurveInDS(IZob, IShape, zob2dv, Et);
+        DStr.ChangeShapeInterferences(IShape).Append(InterFv);
+        Et = TopAbs::Reverse(TopAbs::Compose(OVtx, OArcprolop));
+        int                                                Iop = DStr.AddShape(Fop);
+        occ::handle<TopOpeBRepDS_SurfaceCurveInterference> Interfop =
+          ChFi3d_FilCurveInDS(IZob, Iop, zob2dop, Et);
+        DStr.ChangeShapeInterferences(Iop).Append(Interfop);
+        occ::handle<TopOpeBRepDS_CurvePointInterference> interfprol;
+#ifdef VARIANT1
+        interfprol = ChFi3d_FilVertexInDS(TopAbs_FORWARD, IZob, IVtx, Udeb);
+#else
+        {
+          int IV2    = DStr.AddShape(V2); // VARIANT 2
+          interfprol = ChFi3d_FilVertexInDS(TopAbs_FORWARD, IZob, IV2, Udeb);
+        }
 #endif
+        DStr.ChangeCurveInterferences(IZob).Append(interfprol);
+        int icc    = stripe->IndexPoint(isfirst, IFopArc);
+        interfprol = ChFi3d_FilPointInDS(TopAbs_REVERSED, IZob, icc, Ufin);
+        DStr.ChangeCurveInterferences(IZob).Append(interfprol);
+#ifdef VARIANT1
+        {
+          if (IFopArc == 1)
+          {
+            box1.Add(zob3d->Value(Ufin));
+          }
+          else
+          {
+            box2.Add(zob3d->Value(Ufin));
+          }
+        }
+#else
+        {
+          // cut off existing Arcprol
+          int iArcprol = DStr.AddShape(Arcprol);
+          interfprol   = ChFi3d_FilPointInDS(OVtx, iArcprol, icc, Udeb);
+          DStr.ChangeShapeInterferences(Arcprol).Append(interfprol);
+        }
+#endif
+      }
     }
   }
   ChFi3d_EnlargeBox(DStr, stripe, Fd, box1, box2, isfirst);
@@ -1954,6 +1993,49 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
         if (cp2.Arc().IsSame(Eadj1) || cp2.Arc().IsSame(Eadj2))
         {
           compoint2 = true;
+        }
+      }
+      // A provisional walking patch with no support can be a planar
+      // continuation of the neighboring analytic chamfer. Preserve its end
+      // constraints on that existing surface instead of building a second cap.
+      if ((!compoint1 || !compoint2)
+          && (SeqFil(num)->IndexOfS1() == 0 || SeqFil(num)->IndexOfS2() == 0))
+      {
+        GeomAdaptor_Surface     aNeighbor(DStr.Surface(SeqFil(num1)->Surf()).Surface());
+        GeomLib_IsPlanarSurface aPlanar(DStr.Surface(SeqFil(num)->Surf()).Surface(), tolapp3d);
+        if (aNeighbor.GetType() == GeomAbs_Plane && aPlanar.IsPlanar()
+            && aNeighbor.Plane().Axis().Direction().IsParallel(aPlanar.Plan().Axis().Direction(),
+                                                               Precision::Angular())
+            && aNeighbor.Plane().Distance(aPlanar.Plan().Location()) <= tolapp3d)
+        {
+          double aParameters[2];
+          bool   canExtend = true;
+          for (int aSide = 1; aSide <= 2 && canExtend; ++aSide)
+          {
+            const auto& aPoint = SeqFil(num)->Vertex(isfirst, aSide);
+            const auto& aFi    = SeqFil(num1)->Interference(aSide);
+            canExtend          = aPoint.IsOnArc() && aFi.LineIndex() != 0;
+            if (!canExtend)
+            {
+              break;
+            }
+            GeomAPI_ProjectPointOnCurve aProjection(aPoint.Point(),
+                                                    DStr.Curve(aFi.LineIndex()).Curve());
+            canExtend = aProjection.NbPoints() > 0 && aProjection.LowerDistance() <= tolapp3d;
+            if (canExtend)
+            {
+              aParameters[aSide - 1] = aProjection.LowerDistanceParameter();
+            }
+          }
+          if (canExtend)
+          {
+            for (int aSide = 1; aSide <= 2; ++aSide)
+            {
+              SeqFil(num1)->ChangeVertex(isfirst, aSide) = SeqFil(num)->Vertex(isfirst, aSide);
+              SeqFil(num1)->ChangeInterference(aSide).SetParameter(aParameters[aSide - 1], isfirst);
+            }
+            compoint1 = compoint2 = true;
+          }
         }
       }
       if (compoint1 && compoint2)
@@ -2711,7 +2793,12 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
       }
       else
       {
-        if (Hc1.IsNull())
+        if (Hc1.IsNull()
+            || Sfacemoins1
+                   ->Value(Hc1->Value(CV1.ParameterOnArc()).X(),
+                           Hc1->Value(CV1.ParameterOnArc()).Y())
+                   .SquareDistance(CV1.Point())
+                 > CV1.Tolerance() * CV1.Tolerance())
         {
           // curve 2d not found. Sfacemoins1 is extended and projection is done there
           // CV1.Point ()
@@ -2722,20 +2809,17 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
             BRep_Builder BRE;
             double       tol = BRep_Tool::Tolerance(F);
             BRE.MakeFace(faceprol[0], Sfacemoins1, F.Location(), tol);
-            if (!isOnSame1)
-            {
-              GeomAdaptor_Surface Asurf;
-              Asurf.Load(Sfacemoins1);
-              Extrema_ExtPS ext(CV1.Point(), Asurf, tol, tol, Extrema_ExtFlag_MIN);
-              double        uc1, vc1;
-              if (ext.IsDone())
-              {
-                ext.Point(1).Parameter(uc1, vc1);
-                pfac1.SetX(uc1);
-                pfac1.SetY(vc1);
-              }
-            }
           }
+          // Analytic supports need no extension, but still need the endpoint
+          // projected when this edge has no pcurve on the chosen support face.
+          GeomAPI_ProjectPointOnSurf aProjection(CV1.Point(), Sfacemoins1, BRep_Tool::Tolerance(F));
+          if (!aProjection.IsDone() || aProjection.NbPoints() == 0)
+          {
+            throw Standard_ConstructionError("Cannot project chamfer endpoint on support");
+          }
+          double aU, aV;
+          aProjection.LowerDistanceParameters(aU, aV);
+          pfac1.SetCoord(aU, aV);
         }
         else
         {
@@ -2949,7 +3033,11 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
     else
     {
       Hc2 = BRep_Tool::CurveOnSurface(E2, Face[nbface - 1], Ubid, Ubid);
-      if (Hc2.IsNull())
+      if (Hc2.IsNull()
+          || Sfacemoins1
+                 ->Value(Hc2->Value(CV2.ParameterOnArc()).X(), Hc2->Value(CV2.ParameterOnArc()).Y())
+                 .SquareDistance(CV2.Point())
+               > CV2.Tolerance() * CV2.Tolerance())
       {
         // curve 2d is not found,  Sfacemoins1 is extended CV2.Point() is projected there
 
@@ -2960,17 +3048,15 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
           extend     = true;
           double tol = BRep_Tool::Tolerance(F);
           BRE.MakeFace(faceprol[nb - 1], Sfacemoins1, F.Location(), tol);
-          GeomAdaptor_Surface Asurf;
-          Asurf.Load(Sfacemoins1);
-          Extrema_ExtPS ext(CV2.Point(), Asurf, tol, tol, Extrema_ExtFlag_MIN);
-          double        uc2, vc2;
-          if (ext.IsDone())
-          {
-            ext.Point(1).Parameter(uc2, vc2);
-            pfac2.SetX(uc2);
-            pfac2.SetY(vc2);
-          }
         }
+        GeomAPI_ProjectPointOnSurf aProjection(CV2.Point(), Sfacemoins1, BRep_Tool::Tolerance(F));
+        if (!aProjection.IsDone() || aProjection.NbPoints() == 0)
+        {
+          throw Standard_ConstructionError("Cannot project chamfer endpoint on support");
+        }
+        double aU, aV;
+        aProjection.LowerDistanceParameters(aU, aV);
+        pfac2.SetCoord(aU, aV);
       }
       else
       {
@@ -3106,6 +3192,11 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
     //       pfac1.SetX(xx1);
     //       pfac2.SetX(xx2);
     //     }
+
+    if (oneintersection1 || oneintersection2)
+    {
+      ChFi3d_Recale(Bs, pfac1, pfac2, oneintersection2);
+    }
 
     Pardeb(1) = pfil1.X();
     Pardeb(2) = pfil1.Y();
@@ -3316,7 +3407,7 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
       if (!extend && !(oneintersection1 || oneintersection2))
       {
         int Iarc2      = DStr.AddShape(Edge[nb]);
-        Interfedge[nb] = ChFi3d_FilPointInDS(ori, Iarc2, indpoint2, paredge2);
+        Interfedge[nb] = ChFi3d_FilPointInDS(ori, Iarc2, indpoint2, paredge2, Isvtx2);
         //  DStr.ChangeShapeInterferences(Edge[nb]).Append(Interfp2);
       }
       else
@@ -3370,6 +3461,7 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
         double        par1, par2, par, ParVtx;
         bool          vtx1 = false;
         bool          vtx2 = false;
+        bool          isIndVertex = Isvtx2;
         par1               = ext.Point(1).Parameter();
         ParVtx             = par1;
         if (oneintersection1 || oneintersection2)
@@ -3383,6 +3475,7 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
           {
             pext = CV1.Point();
             ind  = indpoint1;
+            isIndVertex = Isvtx1;
           }
           Extrema_ExtPC ext2(pext, cad, tolpt);
           par2 = ext2.Point(1).Parameter();
@@ -3392,9 +3485,31 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
           par2 = paredge2;
           ind  = indpoint2;
         }
+        if ((oneintersection1 || oneintersection2) && cad.IsPeriodic()
+            && !TopExp::FirstVertex(edgesau).IsSame(TopExp::LastVertex(edgesau)))
+        {
+          // The connector extends the restriction beyond its corner vertex.
+          // Projecting on a periodic basis curve loses that branch: extending
+          // its first endpoint must go below the edge range, not around the
+          // complementary arc through its last endpoint.
+          const double aPeriod = cad.Period();
+          par1                 = ElCLib::InPeriod(par1,
+                                                  ubid - Precision::PConfusion(),
+                                                  ubid + aPeriod - Precision::PConfusion());
+          if (TopExp::FirstVertex(edgesau).IsSame(Vtx))
+          {
+            par2 = ElCLib::InPeriod(par2, par1 - aPeriod, par1);
+          }
+          else if (TopExp::LastVertex(edgesau).IsSame(Vtx))
+          {
+            par2 = ElCLib::InPeriod(par2, par1, par1 + aPeriod);
+          }
+          ParVtx = par1;
+        }
         if (par1 > par2)
         {
           indp1 = ind;
+          vtx1  = isIndVertex;
           indp2 = DStr.AddShape(Vtx);
           vtx2  = true;
           par   = par1;
@@ -3405,6 +3520,7 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
         {
           indp1 = DStr.AddShape(Vtx);
           indp2 = ind;
+          vtx2  = isIndVertex;
           vtx1  = true;
         }
         occ::handle<Geom_Curve> Ct = new Geom_TrimmedCurve(csau, par1, par2);
