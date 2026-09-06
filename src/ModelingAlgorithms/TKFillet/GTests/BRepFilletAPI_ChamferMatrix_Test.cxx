@@ -1291,15 +1291,22 @@ TEST_P(ChFi3d_ChamferRetryConfiguration, RetainsModeAndAuthoritativeParametersAc
     aBuilder.SetParams(0.03, 1.0e-4, 2.0e-5, 3.0e-4, 4.0e-5, 0.006);
   }
   aBuilder.SetContinuity(GeomAbs_C1, 0.005);
-  const auto aParameters = aBuilder.Parameters();
+  auto aParameters = aBuilder.Parameters();
   aBuilder.SetMode(aDefaultMode);
 
-  for (int aBuild = 0; aBuild < 3; ++aBuild)
+  for (int aBuild = 0; aBuild < 4; ++aBuild)
   {
     SCOPED_TRACE(aBuild);
     if (aBuild == 2)
     {
       aBuilder.SetDists(0.20, 0.80, 1, aContext.FirstFace);
+    }
+    if (aBuild == 3)
+    {
+      aBuilder.Reset();
+      ChFi3d_Builder& aBase = aBuilder;
+      aBase.SetParams(0.025, 1.0e-4, 2.0e-5, 3.0e-4, 4.0e-5, 0.006);
+      aParameters = aBuilder.Parameters();
     }
     aBuilder.Compute();
     ASSERT_TRUE(aBuilder.IsDone());
@@ -1310,6 +1317,15 @@ TEST_P(ChFi3d_ChamferRetryConfiguration, RetainsModeAndAuthoritativeParametersAc
     ASSERT_EQ(aBuilder.NbElements(), 1);
     EXPECT_EQ(aBuilder.Value(1)->Mode(), ChFiDS_ClassicChamfer);
     EXPECT_FALSE(aBuilder.Generated(aContext.Edge).IsEmpty());
+    const TopoDS_Shape aReference = buildTwoDistanceChamfer(anInput,
+                                                            aContext,
+                                                            aBuild < 2 ? 0.35 : 0.20,
+                                                            aBuild < 2 ? 0.65 : 0.80,
+                                                            true);
+    ASSERT_FALSE(aReference.IsNull());
+    EXPECT_NEAR(shapeVolume(aBuilder.Shape()),
+                shapeVolume(aReference),
+                shapeVolume(anInput) * 1.0e-8);
   }
 }
 

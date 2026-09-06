@@ -320,6 +320,12 @@ void ChFi3d_ChBuilder::Compute()
 
   if (!myUsesAlternateTwoDistOrdering)
   {
+    // Clear() retains face split state for the previous data structure. Reusing it can
+    // produce an unchanged solid on recompute, so retain settings but not cached topology.
+    if (!myCoup->DataStructure().IsNull())
+    {
+      myCoup = new TopOpeBRepBuild_HBuilder(myCoup->BuildTool());
+    }
     ChFi3d_Builder::Compute();
     if (IsDone() && BRepCheck_Analyzer(Shape()).IsValid() && hasExpectedHistory(*this))
     {
