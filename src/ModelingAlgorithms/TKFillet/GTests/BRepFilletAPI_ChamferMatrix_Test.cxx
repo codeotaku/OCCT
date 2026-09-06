@@ -148,7 +148,7 @@ const char* modeName(const ChamferMode theMode)
   return "Unknown";
 }
 
-TopoDS_Shape makeFamilyShape(const SurfaceFamily theFamily)
+TopoDS_Shape makeFamilyShape(const SurfaceFamily theFamily, const double theExtrusionBend = 1.0)
 {
   switch (theFamily)
   {
@@ -166,8 +166,8 @@ TopoDS_Shape makeFamilyShape(const SurfaceFamily theFamily)
     case SurfaceFamily::PlaneExtrusion: {
       NCollection_Array1<gp_Pnt> aPoints(1, 4);
       aPoints.SetValue(1, gp_Pnt(0, 0, 0));
-      aPoints.SetValue(2, gp_Pnt(3, 1, 0));
-      aPoints.SetValue(3, gp_Pnt(7, -1, 0));
+      aPoints.SetValue(2, gp_Pnt(3, theExtrusionBend, 0));
+      aPoints.SetValue(3, gp_Pnt(7, -theExtrusionBend, 0));
       aPoints.SetValue(4, gp_Pnt(10, 0, 0));
       const occ::handle<Geom_BSplineCurve> aCurve = GeomAPI_PointsToBSpline(aPoints).Curve();
       BRepBuilderAPI_MakeWire              aWire;
@@ -1038,10 +1038,10 @@ TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionTransformsRemainEq
       aContext.SecondFace =
         TopoDS::Face(aTransform.ModifiedShape(aContexts[anEdgeIndex].SecondFace));
       const TopoDS_Shape aFirstReference  = buildTwoDistanceChamfer(aTransformedInput,
-                                                                    aContext,
-                                                                    0.35 * aTransformCase.Scale,
-                                                                    0.65 * aTransformCase.Scale,
-                                                                    false);
+                                                                   aContext,
+                                                                   0.35 * aTransformCase.Scale,
+                                                                   0.65 * aTransformCase.Scale,
+                                                                   false);
       const TopoDS_Shape aSecondReference = buildTwoDistanceChamfer(aTransformedInput,
                                                                     aContext,
                                                                     0.35 * aTransformCase.Scale,
@@ -1097,7 +1097,7 @@ TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionMultipleContoursRe
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricRetryPreservesMixedContourMethods)
+TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricChamferPreservesMixedContourMethods)
 {
   const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
   const std::vector<EdgeContext> aContexts =
@@ -1188,12 +1188,11 @@ TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricRetryPreservesMixedContourMethod
     EXPECT_NEAR(shapeVolume(aChamfer.Shape()),
                 shapeVolume(aSingleContour),
                 shapeVolume(anInput) * 1.0e-8)
-      << "removing the retried contour must rebuild rather than return the stale two-contour shape";
+      << "removing a contour must rebuild rather than return the stale two-contour shape";
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest,
-     AsymmetricPlaneExtrusionRetryPreservesHistoryParametersAndRebuilds)
+TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionPreservesHistoryParametersAndRebuilds)
 {
   const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
   const std::vector<EdgeContext> aContexts =
@@ -1209,7 +1208,8 @@ TEST(BRepFilletAPI_ChamferMatrixTest,
   expectMaterialRemoved(aChamfer.Shape(), anInput);
 
   const NCollection_List<TopoDS_Shape>& aGenerated = aChamfer.Generated(aContext.Edge);
-  ASSERT_FALSE(aGenerated.IsEmpty()) << "the retry must retain chamfer history for the source edge";
+  ASSERT_FALSE(aGenerated.IsEmpty())
+    << "construction must retain chamfer history for the source edge";
   for (const TopoDS_Shape& aGeneratedShape : aGenerated)
   {
     EXPECT_TRUE(containsSubShape(aChamfer.Shape(), aGeneratedShape));
@@ -1244,39 +1244,30 @@ TEST(BRepFilletAPI_ChamferMatrixTest,
 
 namespace
 {
-class ChamferRetryBuilder : public ChFi3d_ChBuilder
+class ChamferStateBuilder : public ChFi3d_ChBuilder
 {
 public:
   using ChFi3d_ChBuilder::ChFi3d_ChBuilder;
 
-  std::array<double, 8> Parameters() const
+  std::array<double, 7> Parameters() const
   {
-    return {angularTolerance(),
-            tolesp,
-            tol2d,
-            tolapp3d,
-            tolapp2d,
-            fleche,
-            tolappangle,
-            static_cast<double>(myConti)};
+    return {tolesp, tol2d, tolapp3d, tolapp2d, fleche, tolappangle, static_cast<double>(myConti)};
   }
-
-  const TopoDS_Shape& Source() const { return sourceShape(); }
 };
 } // namespace
 
-class ChFi3d_ChamferRetryConfiguration
+class ChFi3d_ChamferConfiguration
     : public testing::TestWithParam<std::tuple<ChFiDS_ChamfMode, bool, bool>>
 {
 };
 
-TEST_P(ChFi3d_ChamferRetryConfiguration, RetainsModeAndAuthoritativeParametersAcrossEdits)
+TEST_P(ChFi3d_ChamferConfiguration, RetainsModeAndAuthoritativeParametersAcrossEdits)
 {
   const auto [aDefaultMode, isOpposite, throughBase] = GetParam();
   const TopoDS_Shape anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
   ASSERT_TRUE(BRepCheck_Analyzer(anInput, true, false, true).IsValid());
   const EdgeContext   aContext = findFamilyEdges(anInput, SurfaceFamily::PlaneExtrusion).front();
-  ChamferRetryBuilder aBuilder(anInput);
+  ChamferStateBuilder aBuilder(anInput);
   aBuilder.Add(isOpposite ? 0.65 : 0.35,
                isOpposite ? 0.35 : 0.65,
                aContext.Edge,
@@ -1312,7 +1303,6 @@ TEST_P(ChFi3d_ChamferRetryConfiguration, RetainsModeAndAuthoritativeParametersAc
     ASSERT_TRUE(aBuilder.IsDone());
     expectClosedValidSolid(aBuilder.Shape(), anInput);
     EXPECT_EQ(aBuilder.Parameters(), aParameters);
-    EXPECT_TRUE(aBuilder.Source().IsSame(anInput));
     EXPECT_EQ(aBuilder.Mode(), aDefaultMode);
     ASSERT_EQ(aBuilder.NbElements(), 1);
     EXPECT_EQ(aBuilder.Value(1)->Mode(), ChFiDS_ClassicChamfer);
@@ -1330,18 +1320,175 @@ TEST_P(ChFi3d_ChamferRetryConfiguration, RetainsModeAndAuthoritativeParametersAc
 }
 
 INSTANTIATE_TEST_SUITE_P(BaseAndDerivedConfiguration,
-                         ChFi3d_ChamferRetryConfiguration,
+                         ChFi3d_ChamferConfiguration,
                          testing::Combine(testing::Values(ChFiDS_ClassicChamfer,
                                                           ChFiDS_ConstThroatChamfer,
                                                           ChFiDS_ConstThroatWithPenetrationChamfer),
                                           testing::Bool(),
                                           testing::Bool()));
 
-class ChFi3d_ChamferRetryModes : public testing::TestWithParam<std::tuple<ChFiDS_ChamfMode, bool>>
+class ChFi3d_ChamferIndependentContours
+    : public testing::TestWithParam<std::tuple<int, bool, int, bool>>
 {
 };
 
-TEST_P(ChFi3d_ChamferRetryModes, MixedModesPreserveGeometryAndFutureDefault)
+TEST_P(ChFi3d_ChamferIndependentContours, SupportChoicesComposeWithoutRetry)
+{
+  const auto [aMask, isSecondFirst, aPlacement, isConnected] = GetParam();
+  const auto aSource = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
+  gp_Trsf    aTransform;
+  if (aPlacement == 1)
+  {
+    aTransform.SetRotation(gp_Ax1(gp_Pnt(), gp_Dir(1, 2, 3)), .731);
+    aTransform.SetTranslationPart(gp_Vec(17, -31, 53));
+  }
+  else if (aPlacement == 2)
+  {
+    aTransform.SetMirror(gp_Ax2(gp_Pnt(), gp_Dir(1, 2, 3)));
+  }
+  gp_Trsf aShift;
+  aShift.SetTranslation(gp_Vec(30, 0, 0));
+  const TopoDS_Shape aComponents[] = {
+    BRepBuilderAPI_Transform(aSource, aTransform, true).Shape(),
+    BRepBuilderAPI_Transform(aSource, aTransform * aShift, true).Shape()};
+  EdgeContext aContexts[] = {
+    findFamilyEdges(aComponents[0], SurfaceFamily::PlaneExtrusion).front(),
+    findFamilyEdges(aComponents[1], SurfaceFamily::PlaneExtrusion).front()};
+  TopoDS_Compound anInputCompound, anExpectedCompound;
+  BRep_Builder    aTopology;
+  aTopology.MakeCompound(anInputCompound);
+  aTopology.MakeCompound(anExpectedCompound);
+  for (int i = 0; i < 2; ++i)
+  {
+    aTopology.Add(anInputCompound, aComponents[i]);
+    // This explicitly bypasses recovery: both support choices must work in construction itself.
+    ChFi3d_ChBuilder aReference(aComponents[i]);
+    aReference.Add(.65, .35, aContexts[i].Edge, aContexts[i].SecondFace);
+    aReference.ChFi3d_Builder::Compute();
+    ASSERT_TRUE(aReference.IsDone());
+    expectClosedValidSolid(aReference.Shape(), aComponents[i]);
+    expectMaterialRemoved(aReference.Shape(), aComponents[i]);
+    aTopology.Add(anExpectedCompound, aReference.Shape());
+  }
+  TopoDS_Shape anInput = anInputCompound, anExpected = anExpectedCompound;
+  if (isConnected)
+  {
+    const TopoDS_Shape aBridge =
+      BRepBuilderAPI_Transform(BRepPrimAPI_MakeBox(gp_Pnt(0, 4, 0), 40, 2, 12).Shape(),
+                               aTransform,
+                               true)
+        .Shape();
+    BRepAlgoAPI_Fuse anInputFuse(anInput, aBridge), anExpectedFuse(anExpected, aBridge);
+    ASSERT_TRUE(anInputFuse.IsDone());
+    ASSERT_TRUE(anExpectedFuse.IsDone());
+    anInput    = anInputFuse.Shape();
+    anExpected = anExpectedFuse.Shape();
+    NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> aSolids;
+    TopExp::MapShapes(anInput, TopAbs_SOLID, aSolids);
+    ASSERT_EQ(aSolids.Extent(), 1);
+    const auto aJoinedContexts = findFamilyEdges(anInput, SurfaceFamily::PlaneExtrusion);
+    for (auto& aContext : aContexts)
+    {
+      const auto aMatch = std::find_if(
+        aJoinedContexts.begin(),
+        aJoinedContexts.end(),
+        [&](const EdgeContext& theContext) { return theContext.Edge.IsSame(aContext.Edge); });
+      ASSERT_NE(aMatch, aJoinedContexts.end());
+      aContext = *aMatch;
+    }
+  }
+  ASSERT_TRUE(BRepAlgoAPI_Check(anInput).IsValid());
+  ChFi3d_ChBuilder aBuilder(anInput);
+  for (int j = 0; j < 2; ++j)
+  {
+    const int  i         = isSecondFirst ? 1 - j : j;
+    const bool isSwapped = (aMask & (1 << i)) != 0;
+    aBuilder.Add(isSwapped ? .65 : .35,
+                 isSwapped ? .35 : .65,
+                 aContexts[i].Edge,
+                 isSwapped ? aContexts[i].SecondFace : aContexts[i].FirstFace);
+  }
+  aBuilder.ChFi3d_Builder::Compute();
+  ASSERT_TRUE(aBuilder.IsDone());
+  ASSERT_TRUE(BRepCheck_Analyzer(aBuilder.Shape(), true, false, true).IsValid());
+  ASSERT_TRUE(BRepAlgoAPI_Check(aBuilder.Shape()).IsValid());
+  for (const auto& aContext : aContexts)
+  {
+    EXPECT_FALSE(aBuilder.Generated(aContext.Edge).IsEmpty());
+  }
+  EXPECT_NEAR(shapeVolume(aBuilder.Shape()), shapeVolume(anExpected), 1.e-6);
+  for (bool isReverse : {false, true})
+  {
+    BRepAlgoAPI_Cut aDifference(isReverse ? anExpected : aBuilder.Shape(),
+                                isReverse ? aBuilder.Shape() : anExpected);
+    ASSERT_TRUE(aDifference.IsDone());
+    EXPECT_NEAR(shapeVolume(aDifference.Shape()), 0., 1.e-6);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  IndependentSupportOrders,
+  ChFi3d_ChamferIndependentContours,
+  testing::Combine(testing::Range(0, 4), testing::Bool(), testing::Range(0, 3), testing::Bool()));
+
+class ChFi3d_ChamferOrientedSection
+    : public testing::TestWithParam<std::tuple<double, double, bool>>
+{
+};
+
+TEST_P(ChFi3d_ChamferOrientedSection, AcuteAndObtuseSupportsAgreeWithoutRetry)
+{
+  const auto [aBend, aDistance, isLast] = GetParam();
+  const auto anInput                    = makeFamilyShape(SurfaceFamily::PlaneExtrusion, aBend);
+  ASSERT_TRUE(BRepCheck_Analyzer(anInput, true, false, true).IsValid());
+  ASSERT_TRUE(BRepAlgoAPI_Check(anInput).IsValid());
+  auto aContexts = findFamilyEdges(anInput, SurfaceFamily::PlaneExtrusion);
+  aContexts.erase(std::remove_if(aContexts.begin(),
+                                 aContexts.end(),
+                                 [](const EdgeContext& theEdge) {
+                                   BRepAdaptor_Curve aCurve(theEdge.Edge);
+                                   return std::abs(aCurve.Value(aCurve.LastParameter()).Z()
+                                                   - aCurve.Value(aCurve.FirstParameter()).Z())
+                                          < 11.;
+                                 }),
+                  aContexts.end());
+  ASSERT_EQ(aContexts.size(), 2u);
+  const auto&  aContext = isLast ? aContexts.back() : aContexts.front();
+  TopoDS_Shape aResults[2];
+  for (int i = 0; i < 2; ++i)
+  {
+    ChFi3d_ChBuilder aBuilder(anInput);
+    aBuilder.Add(i ? 1. - aDistance : aDistance,
+                 i ? aDistance : 1. - aDistance,
+                 aContext.Edge,
+                 i ? aContext.SecondFace : aContext.FirstFace);
+    aBuilder.ChFi3d_Builder::Compute();
+    ASSERT_TRUE(aBuilder.IsDone());
+    aResults[i] = aBuilder.Shape();
+    ASSERT_TRUE(BRepCheck_Analyzer(aResults[i], true, false, true).IsValid());
+    expectClosedValidSolid(aResults[i], anInput);
+    expectMaterialRemoved(aResults[i], anInput);
+    EXPECT_FALSE(aBuilder.Generated(aContext.Edge).IsEmpty());
+  }
+  for (int i = 0; i < 2; ++i)
+  {
+    BRepAlgoAPI_Cut aDifference(aResults[i], aResults[1 - i]);
+    ASSERT_TRUE(aDifference.IsDone());
+    EXPECT_NEAR(shapeVolume(aDifference.Shape()), 0., 1.e-6);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(SectionCrossings,
+                         ChFi3d_ChamferOrientedSection,
+                         testing::Combine(testing::Values(-2., -1., -.25, .25, 1., 2.),
+                                          testing::Values(.2, .35, .5, .65, .8),
+                                          testing::Bool()));
+
+class ChFi3d_ChamferMixedModes : public testing::TestWithParam<std::tuple<ChFiDS_ChamfMode, bool>>
+{
+};
+
+TEST_P(ChFi3d_ChamferMixedModes, MixedModesPreserveGeometryAndFutureDefault)
 {
   const ChFiDS_ChamfMode aBoxMode    = std::get<0>(GetParam());
   const bool             isBoxFirst  = std::get<1>(GetParam());
@@ -1373,7 +1520,7 @@ TEST_P(ChFi3d_ChamferRetryModes, MixedModesPreserveGeometryAndFutureDefault)
   ASSERT_FALSE(anExtrusionReference.IsNull());
   expectClosedValidSolid(anExtrusionReference, anExtrusion);
 
-  ChamferRetryBuilder aBuilder(anInput);
+  ChamferStateBuilder aBuilder(anInput);
   const auto          addBox = [&] {
     aBuilder.SetMode(aBoxMode);
     aBuilder.Add(0.20, 0.40, aBoxContext.Edge, aBoxContext.FirstFace);
@@ -1429,7 +1576,7 @@ TEST_P(ChFi3d_ChamferRetryModes, MixedModesPreserveGeometryAndFutureDefault)
 }
 
 INSTANTIATE_TEST_SUITE_P(ClassicAndThroatContours,
-                         ChFi3d_ChamferRetryModes,
+                         ChFi3d_ChamferMixedModes,
                          testing::Combine(testing::Values(ChFiDS_ClassicChamfer,
                                                           ChFiDS_ConstThroatChamfer,
                                                           ChFiDS_ConstThroatWithPenetrationChamfer),

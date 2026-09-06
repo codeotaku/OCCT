@@ -890,22 +890,18 @@ bool ChFi3d_Builder::StoreData(occ::handle<ChFiDS_SurfData>&         Data,
     PCurveOnFace = Fint2.PCurveOnFace();
   }
 
-  //  Modified by skv - Wed Jun  9 17:16:26 2004 OCC5898 Begin
-  //   gp_Pnt2d PUV = PCurveOnFace->Value((VFirst+VLast)/2.);
-  //   gp_Pnt P;
-  //   gp_Vec Du1,Du2,Dv1,Dv2;
-  //   Sref->D1(PUV.X(),PUV.Y(),P,Du1,Dv1);
-  //   Du1.Cross(Dv1);
-  //   if (Or1 == TopAbs_REVERSED) Du1.Reverse();
-  //   Surf->D1(UFirst,(VFirst+VLast)/2.,P,Du2,Dv2);
-  //   Du2.Cross(Dv2);
-  //   if (Du1.Dot(Du2)>0) Data->ChangeOrientation() = TopAbs_FORWARD;
-  //   else Data->ChangeOrientation() = TopAbs_REVERSED;
-
+  // The walking transition gives the oriented section/support crossing. A normal
+  // dot product alone can choose the opposite orientation for an acute chamfer.
+  const TopAbs_Orientation aTransition = ChFi3d_TrsfTrans(lin->TransitionOnS1());
+  if (aTransition == TopAbs_FORWARD || aTransition == TopAbs_REVERSED)
+  {
+    Data->ChangeOrientation() = TopAbs::Compose(Or1, aTransition);
+  }
   double aDelta = VLast - VFirst;
   int    aDenom = 2;
 
-  for (;;)
+  // Retain the normal-based fallback when walking has no oriented transition.
+  while (aTransition == TopAbs_INTERNAL)
   {
     double   aDeltav = aDelta / aDenom;
     double   aParam  = VFirst + aDeltav;
@@ -947,7 +943,6 @@ bool ChFi3d_Builder::StoreData(occ::handle<ChFiDS_SurfData>&         Data,
 
     break;
   }
-  //  Modified by skv - Wed Jun  9 17:16:26 2004 OCC5898 End
 
   if (!Gd1 && !S1.IsNull())
   {
