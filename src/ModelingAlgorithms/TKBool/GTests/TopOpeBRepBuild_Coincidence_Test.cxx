@@ -193,3 +193,55 @@ TEST(TopOpeBRepBuild_CoincidenceRepresentation, DegreeKnotsAndSeamsPreserveGeome
     }
   }
 }
+
+class TopOpeBRepBuild_StationaryCoincidence
+    : public testing::TestWithParam<std::tuple<int, bool, bool, bool, int>>
+{
+};
+
+TEST_P(TopOpeBRepBuild_StationaryCoincidence, ValidParameterizationPreservesDirection)
+{
+  const auto [aRepresentation, isCurveReversed, isFirstReversed, isSecondReversed, aPlacement] =
+    GetParam();
+  NCollection_Array1<gp_Pnt> aPoles(1, 4);
+  aPoles(1) = gp_Pnt(0, 0, 0);
+  aPoles(2) = gp_Pnt(10, 0, 0);
+  aPoles(3) = gp_Pnt(0, 0, 0);
+  aPoles(4) = gp_Pnt(10, 0, 0);
+  // This curve is monotone, but its derivative vanishes exactly at the midpoint.
+  const occ::handle<Geom_Curve> aStationary = new Geom_BezierCurve(aPoles);
+  const occ::handle<Geom_Curve> aLine =
+    new Geom_TrimmedCurve(new Geom_Line(gp_Pnt(), gp_Dir(1, 0, 0)), 0, 10);
+  occ::handle<Geom_Curve> aFirst = aRepresentation == 1 ? aLine : aStationary;
+  occ::handle<Geom_Curve> aSecond =
+    occ::down_cast<Geom_Curve>((aRepresentation == 2 ? aLine : aStationary)->Copy());
+  if (isCurveReversed)
+  {
+    aSecond->Reverse();
+  }
+  TopoDS_Edge aFirstEdge = placedEdge(BRepBuilderAPI_MakeEdge(aFirst), aPlacement);
+  TopoDS_Edge aSecondEdge = placedEdge(BRepBuilderAPI_MakeEdge(aSecond), aPlacement);
+  if (isFirstReversed)
+  {
+    aFirstEdge.Reverse();
+  }
+  if (isSecondReversed)
+  {
+    aSecondEdge.Reverse();
+  }
+  ASSERT_TRUE(BRepCheck_Analyzer(aFirstEdge, true, false, true).IsValid());
+  ASSERT_TRUE(BRepCheck_Analyzer(aSecondEdge, true, false, true).IsValid());
+  ASSERT_FALSE(BRep_Tool::Degenerated(aFirstEdge));
+  ASSERT_FALSE(BRep_Tool::Degenerated(aSecondEdge));
+  bool isReversed = false;
+  ASSERT_TRUE(TopOpeBRepBuild_Tools::AreCoincidentEdges(aFirstEdge, aSecondEdge, isReversed));
+  EXPECT_EQ(isReversed, isCurveReversed);
+}
+
+INSTANTIATE_TEST_SUITE_P(StationaryParameters,
+                         TopOpeBRepBuild_StationaryCoincidence,
+                         testing::Combine(testing::Values(0, 1, 2),
+                                          testing::Bool(),
+                                          testing::Bool(),
+                                          testing::Bool(),
+                                          testing::Values(0, 1, 2)));

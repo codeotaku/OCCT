@@ -19,6 +19,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Tool.hxx>
+#include <BOPTools_AlgoTools.hxx>
 #include <IntTools_EdgeEdge.hxx>
 #include <IntTools_Context.hxx>
 #include <BRepTopAdaptor_FClass2d.hxx>
@@ -997,21 +998,12 @@ bool TopOpeBRepBuild_Tools::AreCoincidentEdges(const TopoDS_Edge& theFirst,
   {
     return false;
   }
-  gp_Pnt aPoint, aPoint2;
-  gp_Vec aTangent, aTangent2;
-  aC1.D1((aC1.FirstParameter() + aC1.LastParameter()) * .5, aPoint, aTangent);
-  double           aParameter;
-  IntTools_Context aContext;
-  if (!aContext.ProjectPointOnEdge(aPoint, theSecond, aParameter))
-  {
-    return false;
-  }
-  aC2.D1(aParameter, aPoint2, aTangent2);
-  if (aTangent.SquareMagnitude() <= gp::Resolution()
-      || aTangent2.SquareMagnitude() <= gp::Resolution())
-  {
-    return false;
-  }
-  theIsReversed = aTangent.Dot(aTangent2) < 0.;
-  return true;
+  // Compare geometric directions independently of the topological use orientation.
+  int anError = 0;
+  theIsReversed =
+    BOPTools_AlgoTools::IsSplitToReverse(TopoDS::Edge(theFirst.Oriented(TopAbs_FORWARD)),
+                                         TopoDS::Edge(theSecond.Oriented(TopAbs_FORWARD)),
+                                         new IntTools_Context,
+                                         &anError);
+  return anError == 0;
 }
