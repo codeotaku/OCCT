@@ -551,10 +551,7 @@ void ChFi3d_Builder::Compute()
             && aDistance > BRep_Tool::Tolerance(anEdge))
         {
           aBuilder.UpdateEdge(anEdge, aDistance);
-          for (TopExp_Explorer aVertex(anEdge, TopAbs_VERTEX); aVertex.More(); aVertex.Next())
-          {
-            aBuilder.UpdateVertex(TopoDS::Vertex(aVertex.Current()), aDistance);
-          }
+          BRepLib::UpdateTolerances(anEdge);
         }
       }
     }
