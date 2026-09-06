@@ -356,6 +356,39 @@ EdgeContext findFamilyEdge(const TopoDS_Shape& theShape,
   return aBestContext;
 }
 
+std::vector<EdgeContext> findFamilyEdges(const TopoDS_Shape& theShape,
+                                         const SurfaceFamily theFamily)
+{
+  NCollection_IndexedDataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>, TopTools_ShapeMapHasher>
+    anEdgeFaceMap;
+  TopExp::MapShapesAndAncestors(theShape, TopAbs_EDGE, TopAbs_FACE, anEdgeFaceMap);
+  const auto               anExpected = expectedSurfaceTypes(theFamily);
+  std::vector<EdgeContext> aContexts;
+  for (int anEdgeIndex = 1; anEdgeIndex <= anEdgeFaceMap.Extent(); ++anEdgeIndex)
+  {
+    const TopoDS_Edge                     anEdge = TopoDS::Edge(anEdgeFaceMap.FindKey(anEdgeIndex));
+    const NCollection_List<TopoDS_Shape>& aFaces = anEdgeFaceMap.FindFromIndex(anEdgeIndex);
+    if (aFaces.Size() < 2)
+    {
+      continue;
+    }
+
+    const TopoDS_Face         aFirst      = TopoDS::Face(aFaces.First());
+    const TopoDS_Face         aSecond     = TopoDS::Face(aFaces.Last());
+    const GeomAbs_SurfaceType aFirstType  = BRepAdaptor_Surface(aFirst).GetType();
+    const GeomAbs_SurfaceType aSecondType = BRepAdaptor_Surface(aSecond).GetType();
+    if (aFirstType == anExpected.first && aSecondType == anExpected.second)
+    {
+      aContexts.push_back({anEdge, aFirst, aSecond});
+    }
+    else if (aFirstType == anExpected.second && aSecondType == anExpected.first)
+    {
+      aContexts.push_back({anEdge, aSecond, aFirst});
+    }
+  }
+  return aContexts;
+}
+
 double shapeVolume(const TopoDS_Shape& theShape)
 {
   GProp_GProps aProperties;
@@ -368,6 +401,18 @@ void expectMaterialRemoved(const TopoDS_Shape& theResult, const TopoDS_Shape& th
   const double anInputVolume = shapeVolume(theInput);
   EXPECT_LT(shapeVolume(theResult), anInputVolume - std::max(1.0e-12, anInputVolume * 1.0e-10))
     << "a successful chamfer must not return an unchanged input solid";
+}
+
+bool containsSubShape(const TopoDS_Shape& theShape, const TopoDS_Shape& theSubShape)
+{
+  for (TopExp_Explorer anExp(theShape, theSubShape.ShapeType()); anExp.More(); anExp.Next())
+  {
+    if (anExp.Current().IsSame(theSubShape))
+    {
+      return true;
+    }
+  }
+  return false;
 }
 
 double maximumTolerance(const TopoDS_Shape& theShape)
@@ -873,6 +918,327 @@ TEST(BRepFilletAPI_ChamferMatrixTest,
       }
     }
   }
+}
+
+TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionEveryBoundaryAndReferenceIsValid)
+{
+  const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
+  const std::vector<EdgeContext> aContexts =
+    findFamilyEdges(anInput, SurfaceFamily::PlaneExtrusion);
+  ASSERT_EQ(aContexts.size(), 4u);
+
+  for (std::size_t anEdgeIndex = 0; anEdgeIndex < aContexts.size(); ++anEdgeIndex)
+  {
+    SCOPED_TRACE("edge=" + std::to_string(anEdgeIndex));
+    const TopoDS_Shape aFirstReference =
+      buildTwoDistanceChamfer(anInput, aContexts[anEdgeIndex], 0.35, 0.65, false);
+    const TopoDS_Shape aSecondReference =
+      buildTwoDistanceChamfer(anInput, aContexts[anEdgeIndex], 0.35, 0.65, true);
+    ASSERT_FALSE(aFirstReference.IsNull());
+    ASSERT_FALSE(aSecondReference.IsNull());
+    expectClosedValidSolid(aFirstReference, anInput);
+    expectClosedValidSolid(aSecondReference, anInput);
+    expectMaterialRemoved(aFirstReference, anInput);
+    expectMaterialRemoved(aSecondReference, anInput);
+    EXPECT_NEAR(shapeVolume(aFirstReference),
+                shapeVolume(aSecondReference),
+                shapeVolume(anInput) * 1.0e-8);
+  }
+}
+
+TEST(BRepFilletAPI_ChamferMatrixTest,
+     TwoDistancePlaneExtrusionRatiosAndEdgeOrientationsRemainEquivalent)
+{
+  const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
+  const std::vector<EdgeContext> aContexts =
+    findFamilyEdges(anInput, SurfaceFamily::PlaneExtrusion);
+  ASSERT_EQ(aContexts.size(), 4u);
+  // Include equal values deliberately: FreeCAD's equal-distance command calls OCCT's
+  // face-referenced two-distance overload with D1 == D2, which is a different builder path from
+  // the symmetric Add(distance, edge) overload.
+  const std::array<std::array<double, 2>, 7> aDistances = {{{0.05, 0.15},
+                                                            {0.20, 0.80},
+                                                            {0.35, 0.65},
+                                                            {0.49, 0.51},
+                                                            {0.50, 0.50},
+                                                            {0.65, 0.35},
+                                                            {0.80, 0.20}}};
+
+  for (std::size_t anEdgeIndex = 0; anEdgeIndex < aContexts.size(); ++anEdgeIndex)
+  {
+    for (const std::array<double, 2>& aDistance : aDistances)
+    {
+      for (const bool isReversed : {false, true})
+      {
+        EdgeContext aContext = aContexts[anEdgeIndex];
+        if (isReversed)
+        {
+          aContext.Edge.Reverse();
+        }
+        SCOPED_TRACE("edge=" + std::to_string(anEdgeIndex) + "/d1=" + std::to_string(aDistance[0])
+                     + "/d2=" + std::to_string(aDistance[1])
+                     + (isReversed ? "/reversed" : "/forward"));
+        const TopoDS_Shape aFirstReference =
+          buildTwoDistanceChamfer(anInput, aContext, aDistance[0], aDistance[1], false);
+        const TopoDS_Shape aSecondReference =
+          buildTwoDistanceChamfer(anInput, aContext, aDistance[0], aDistance[1], true);
+        ASSERT_FALSE(aFirstReference.IsNull());
+        ASSERT_FALSE(aSecondReference.IsNull());
+        expectClosedValidSolid(aFirstReference, anInput);
+        expectClosedValidSolid(aSecondReference, anInput);
+        expectMaterialRemoved(aFirstReference, anInput);
+        expectMaterialRemoved(aSecondReference, anInput);
+        EXPECT_NEAR(shapeVolume(aFirstReference),
+                    shapeVolume(aSecondReference),
+                    shapeVolume(anInput) * 1.0e-8);
+      }
+    }
+  }
+}
+
+TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionTransformsRemainEquivalent)
+{
+  struct TransformCase
+  {
+    const char* Name;
+    gp_Trsf     Transform;
+    double      Scale;
+  };
+
+  gp_Trsf aRigid;
+  aRigid.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(1, 3, 2)), 0.61);
+  aRigid.SetTranslationPart(gp_Vec(-13, 17, 9));
+  gp_Trsf aMirror;
+  aMirror.SetMirror(gp_Ax2(gp_Pnt(1, -2, 3), gp_Dir(2, 1, 1)));
+  gp_Trsf aSmallScale;
+  aSmallScale.SetScale(gp_Pnt(0, 0, 0), 1.0e-2);
+  gp_Trsf aLargeScale;
+  aLargeScale.SetScale(gp_Pnt(0, 0, 0), 1.0e2);
+  const std::array<TransformCase, 4> aTransforms = {{{"Rigid", aRigid, 1.0},
+                                                     {"Mirror", aMirror, 1.0},
+                                                     {"Scale1eMinus2", aSmallScale, 1.0e-2},
+                                                     {"Scale1e2", aLargeScale, 1.0e2}}};
+
+  const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
+  const std::vector<EdgeContext> aContexts =
+    findFamilyEdges(anInput, SurfaceFamily::PlaneExtrusion);
+  ASSERT_EQ(aContexts.size(), 4u);
+  for (const TransformCase& aTransformCase : aTransforms)
+  {
+    BRepBuilderAPI_Transform aTransform(anInput, aTransformCase.Transform, true);
+    ASSERT_TRUE(aTransform.IsDone());
+    const TopoDS_Shape aTransformedInput = aTransform.Shape();
+    for (std::size_t anEdgeIndex = 0; anEdgeIndex < aContexts.size(); ++anEdgeIndex)
+    {
+      SCOPED_TRACE(std::string(aTransformCase.Name) + "/edge=" + std::to_string(anEdgeIndex));
+      EdgeContext aContext;
+      aContext.Edge      = TopoDS::Edge(aTransform.ModifiedShape(aContexts[anEdgeIndex].Edge));
+      aContext.FirstFace = TopoDS::Face(aTransform.ModifiedShape(aContexts[anEdgeIndex].FirstFace));
+      aContext.SecondFace =
+        TopoDS::Face(aTransform.ModifiedShape(aContexts[anEdgeIndex].SecondFace));
+      const TopoDS_Shape aFirstReference  = buildTwoDistanceChamfer(aTransformedInput,
+                                                                    aContext,
+                                                                    0.35 * aTransformCase.Scale,
+                                                                    0.65 * aTransformCase.Scale,
+                                                                    false);
+      const TopoDS_Shape aSecondReference = buildTwoDistanceChamfer(aTransformedInput,
+                                                                    aContext,
+                                                                    0.35 * aTransformCase.Scale,
+                                                                    0.65 * aTransformCase.Scale,
+                                                                    true);
+      ASSERT_FALSE(aFirstReference.IsNull());
+      ASSERT_FALSE(aSecondReference.IsNull());
+      expectClosedValidSolid(aFirstReference, aTransformedInput, aTransformCase.Scale);
+      expectClosedValidSolid(aSecondReference, aTransformedInput, aTransformCase.Scale);
+      expectMaterialRemoved(aFirstReference, aTransformedInput);
+      expectMaterialRemoved(aSecondReference, aTransformedInput);
+      EXPECT_NEAR(shapeVolume(aFirstReference),
+                  shapeVolume(aSecondReference),
+                  std::max(1.0e-12, shapeVolume(aTransformedInput) * 1.0e-8));
+    }
+  }
+}
+
+TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionMultipleContoursRemainValid)
+{
+  const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
+  const std::vector<EdgeContext> aContexts =
+    findFamilyEdges(anInput, SurfaceFamily::PlaneExtrusion);
+  std::vector<EdgeContext> aVerticalContexts;
+  for (const EdgeContext& aContext : aContexts)
+  {
+    GProp_GProps aProperties;
+    BRepGProp::LinearProperties(aContext.Edge, aProperties);
+    if (std::abs(aProperties.Mass() - 12.0) <= Precision::Confusion())
+    {
+      aVerticalContexts.push_back(aContext);
+    }
+  }
+  ASSERT_EQ(aVerticalContexts.size(), 2u);
+
+  BRepFilletAPI_MakeChamfer aChamfer(anInput);
+  for (const EdgeContext& aContext : aVerticalContexts)
+  {
+    aChamfer.Add(0.35, 0.65, aContext.Edge, aContext.FirstFace);
+  }
+  aChamfer.Build();
+  ASSERT_TRUE(aChamfer.IsDone());
+  expectClosedValidSolid(aChamfer.Shape(), anInput);
+  expectMaterialRemoved(aChamfer.Shape(), anInput);
+  ASSERT_EQ(aChamfer.NbContours(), 2);
+  for (int aContour = 1; aContour <= aChamfer.NbContours(); ++aContour)
+  {
+    double aFirstDistance  = 0.0;
+    double aSecondDistance = 0.0;
+    aChamfer.Dists(aContour, aFirstDistance, aSecondDistance);
+    EXPECT_DOUBLE_EQ(aFirstDistance, 0.35);
+    EXPECT_DOUBLE_EQ(aSecondDistance, 0.65);
+  }
+}
+
+TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricRetryPreservesMixedContourMethods)
+{
+  const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
+  const std::vector<EdgeContext> aContexts =
+    findFamilyEdges(anInput, SurfaceFamily::PlaneExtrusion);
+  std::vector<EdgeContext> aVerticalContexts;
+  for (const EdgeContext& aContext : aContexts)
+  {
+    GProp_GProps aProperties;
+    BRepGProp::LinearProperties(aContext.Edge, aProperties);
+    if (std::abs(aProperties.Mass() - 12.0) <= Precision::Confusion())
+    {
+      aVerticalContexts.push_back(aContext);
+    }
+  }
+  ASSERT_EQ(aVerticalContexts.size(), 2u);
+
+  for (const ChamferMode aSecondMode : {ChamferMode::EqualDistance, ChamferMode::DistanceAngle})
+  {
+    SCOPED_TRACE(modeName(aSecondMode));
+    BRepFilletAPI_MakeChamfer aChamfer(anInput);
+    aChamfer.Add(0.35, 0.65, aVerticalContexts.front().Edge, aVerticalContexts.front().FirstFace);
+    if (aSecondMode == ChamferMode::EqualDistance)
+    {
+      aChamfer.Add(0.40, aVerticalContexts.back().Edge);
+    }
+    else
+    {
+      aChamfer.AddDA(0.25,
+                     M_PI / 4.0,
+                     aVerticalContexts.back().Edge,
+                     aVerticalContexts.back().FirstFace);
+    }
+    aChamfer.Build();
+    ASSERT_TRUE(aChamfer.IsDone());
+    expectClosedValidSolid(aChamfer.Shape(), anInput);
+    expectMaterialRemoved(aChamfer.Shape(), anInput);
+    ASSERT_EQ(aChamfer.NbContours(), 2);
+    EXPECT_TRUE(aChamfer.IsTwoDistances(1));
+    EXPECT_EQ(aChamfer.IsSymetric(2), aSecondMode == ChamferMode::EqualDistance);
+    EXPECT_EQ(aChamfer.IsDistanceAngle(2), aSecondMode == ChamferMode::DistanceAngle);
+
+    double aFirstDistance  = 0.0;
+    double aSecondDistance = 0.0;
+    aChamfer.Dists(1, aFirstDistance, aSecondDistance);
+    EXPECT_DOUBLE_EQ(aFirstDistance, 0.35);
+    EXPECT_DOUBLE_EQ(aSecondDistance, 0.65);
+    if (aSecondMode == ChamferMode::EqualDistance)
+    {
+      double aDistance = 0.0;
+      aChamfer.GetDist(2, aDistance);
+      EXPECT_DOUBLE_EQ(aDistance, 0.40);
+    }
+    else
+    {
+      double aDistance = 0.0;
+      double anAngle   = 0.0;
+      aChamfer.GetDistAngle(2, aDistance, anAngle);
+      EXPECT_DOUBLE_EQ(aDistance, 0.25);
+      EXPECT_DOUBLE_EQ(anAngle, M_PI / 4.0);
+    }
+
+    for (const EdgeContext& aContext : aVerticalContexts)
+    {
+      EXPECT_FALSE(aChamfer.Generated(aContext.Edge).IsEmpty());
+    }
+
+    aChamfer.Remove(aVerticalContexts.front().Edge);
+    ASSERT_EQ(aChamfer.NbContours(), 1);
+    aChamfer.Build();
+    ASSERT_TRUE(aChamfer.IsDone());
+    expectClosedValidSolid(aChamfer.Shape(), anInput);
+    expectMaterialRemoved(aChamfer.Shape(), anInput);
+    BRepFilletAPI_MakeChamfer aSingleContourBuilder(anInput);
+    if (aSecondMode == ChamferMode::EqualDistance)
+    {
+      aSingleContourBuilder.Add(0.40, aVerticalContexts.back().Edge);
+    }
+    else
+    {
+      aSingleContourBuilder.AddDA(0.25,
+                                  M_PI / 4.0,
+                                  aVerticalContexts.back().Edge,
+                                  aVerticalContexts.back().FirstFace);
+    }
+    aSingleContourBuilder.Build();
+    ASSERT_TRUE(aSingleContourBuilder.IsDone());
+    const TopoDS_Shape aSingleContour = aSingleContourBuilder.Shape();
+    EXPECT_NEAR(shapeVolume(aChamfer.Shape()),
+                shapeVolume(aSingleContour),
+                shapeVolume(anInput) * 1.0e-8)
+      << "removing the retried contour must rebuild rather than return the stale two-contour shape";
+  }
+}
+
+TEST(BRepFilletAPI_ChamferMatrixTest,
+     AsymmetricPlaneExtrusionRetryPreservesHistoryParametersAndRebuilds)
+{
+  const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
+  const std::vector<EdgeContext> aContexts =
+    findFamilyEdges(anInput, SurfaceFamily::PlaneExtrusion);
+  ASSERT_EQ(aContexts.size(), 4u);
+  const EdgeContext& aContext = aContexts.front();
+
+  BRepFilletAPI_MakeChamfer aChamfer(anInput);
+  aChamfer.Add(0.35, 0.65, aContext.Edge, aContext.FirstFace);
+  aChamfer.Build();
+  ASSERT_TRUE(aChamfer.IsDone());
+  expectClosedValidSolid(aChamfer.Shape(), anInput);
+  expectMaterialRemoved(aChamfer.Shape(), anInput);
+
+  const NCollection_List<TopoDS_Shape>& aGenerated = aChamfer.Generated(aContext.Edge);
+  ASSERT_FALSE(aGenerated.IsEmpty()) << "the retry must retain chamfer history for the source edge";
+  for (const TopoDS_Shape& aGeneratedShape : aGenerated)
+  {
+    EXPECT_TRUE(containsSubShape(aChamfer.Shape(), aGeneratedShape));
+  }
+
+  double aFirstDistance  = 0.0;
+  double aSecondDistance = 0.0;
+  aChamfer.Dists(1, aFirstDistance, aSecondDistance);
+  EXPECT_DOUBLE_EQ(aFirstDistance, 0.35);
+  EXPECT_DOUBLE_EQ(aSecondDistance, 0.65);
+
+  const double aFirstBuildVolume = shapeVolume(aChamfer.Shape());
+  aChamfer.Build();
+  ASSERT_TRUE(aChamfer.IsDone());
+  expectClosedValidSolid(aChamfer.Shape(), anInput);
+  EXPECT_NEAR(shapeVolume(aChamfer.Shape()), aFirstBuildVolume, shapeVolume(anInput) * 1.0e-10);
+
+  aChamfer.SetDists(0.20, 0.80, 1, aContext.FirstFace);
+  aChamfer.Build();
+  ASSERT_TRUE(aChamfer.IsDone());
+  expectClosedValidSolid(aChamfer.Shape(), anInput);
+  expectMaterialRemoved(aChamfer.Shape(), anInput);
+  const TopoDS_Shape anEquivalent = buildTwoDistanceChamfer(anInput, aContext, 0.20, 0.80, true);
+  ASSERT_FALSE(anEquivalent.IsNull());
+  EXPECT_NEAR(shapeVolume(aChamfer.Shape()),
+              shapeVolume(anEquivalent),
+              shapeVolume(anInput) * 1.0e-8);
+  aChamfer.Dists(1, aFirstDistance, aSecondDistance);
+  EXPECT_DOUBLE_EQ(aFirstDistance, 0.20);
+  EXPECT_DOUBLE_EQ(aSecondDistance, 0.80);
 }
 
 TEST(BRepFilletAPI_ChamferMatrixTest, Build_RigidMirrorAndScaleTransforms_PreservesValidity)
