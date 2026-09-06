@@ -249,16 +249,8 @@ static bool IsConsumedByCoincidentCurves(
   const occ::handle<TopOpeBRepDS_HDataStructure>& theDataStructure,
   const TopOpeBRepBuild_Builder&                  theBuilder)
 {
-  // A partially coincident boundary can leave several separate face regions.
-  // Do not apply whole-curve consumption to just one of its split intervals.
-  bool hasSplitCurve = false;
-  for (TopOpeBRepDS_CurveIterator it(theDataStructure->FaceCurves(theFace)); it.More(); it.Next())
-  {
-    if (theBuilder.NewEdges(it.Current()).Extent() > 1)
-    {
-      hasSplitCurve = true;
-    }
-  }
+  // Coincidence of one pair of traces only consumes their common region.
+  // Other traces can still bound a surviving part of the support face.
   for (int aStateIndex = 0; aStateIndex < 2; ++aStateIndex)
   {
     const TopAbs_State aState = aStateIndex == 0 ? TopAbs_IN : TopAbs_OUT;
@@ -276,9 +268,10 @@ static bool IsConsumedByCoincidentCurves(
          anIt.More();
          anIt.Next())
     {
-      if (anIt.Value() == 3 && !hasSplitCurve)
+      // A collapsed point trace cannot bound a surviving face region.
+      if (BRep_Tool::Degenerated(TopoDS::Edge(anIt.Key())))
       {
-        return true;
+        continue;
       }
       hasConsumed = hasConsumed || anIt.Value() == 3;
       if (anIt.Value() != 3 && anIt.Value() != 0)

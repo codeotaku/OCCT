@@ -1,13 +1,17 @@
 // Copyright (c) 2026 OPEN CASCADE SAS
 //
 // This file is part of Open CASCADE Technology software library.
+//
 // This library is free software; you can redistribute it and/or modify it under
 // the terms of the GNU Lesser General Public License version 2.1 as published
-// by the Free Software Foundation, with the special exception defined in
-// OCCT_LGPL_EXCEPTION.txt. See LICENSE_LGPL_21.txt for the complete license.
+// by the Free Software Foundation, with special exception defined in the file
+// OCCT_LGPL_EXCEPTION.txt. Consult the file LICENSE_LGPL_21.txt included in OCCT
+// distribution for complete text of the license and disclaimer of any warranty.
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Check.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -37,6 +41,7 @@
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <gp_Trsf.hxx>
+#include <gp_Pln.hxx>
 #include <gtest/gtest.h>
 #include <cmath>
 #include <cstdlib>
@@ -370,14 +375,23 @@ INSTANTIATE_TEST_SUITE_P(Boundary,
                                           testing::Range(0, 3),
                                           testing::Bool()));
 
-class ChamferSequentialLimit : public testing::TestWithParam<std::tuple<int, int, int, bool, bool>>
+class ChamferSequentialLimit
+    : public testing::TestWithParam<std::tuple<int, int, int, bool, bool, bool, int>>
 {
 };
 
 TEST_P(ChamferSequentialLimit, ConsumeLowerContourAfterUpperChamfer)
 {
-  const auto [aKind, aState, aScaleIndex, isLocated, isReversed] = GetParam();
-  TopoDS_Shape              aSource = makeLimitSource(aKind == 0 ? 2 : 8);
+  const auto [aKind, aState, aScaleIndex, isLocated, isReversed, isCompleteLoop, aSupport] =
+    GetParam();
+  TopoDS_Shape aSource = makeLimitSource(aKind == 0 ? 2 : 8);
+  if (aKind == 3)
+  {
+    // The surviving bottom region can have an independent inner wire.
+    BRepAlgoAPI_Cut aBore(aSource, BRepPrimAPI_MakeCylinder(3.0, 20.0).Shape());
+    ASSERT_TRUE(aBore.IsDone());
+    aSource = aBore.Shape();
+  }
   BRepFilletAPI_MakeChamfer anUpper(aSource);
   anUpper.Add(10.0, findTopEdge(aSource, aKind == 0 ? 2 : 8));
   anUpper.Build();
@@ -417,7 +431,8 @@ TEST_P(ChamferSequentialLimit, ConsumeLowerContourAfterUpperChamfer)
     {
       continue;
     }
-    if (aCurve.GetType() == GeomAbs_Line && std::abs(aMid.Y() - 10.0) < 1.e-7)
+    const double aSide = !isCompleteLoop && isReversed ? -10.0 : 10.0;
+    if (aCurve.GetType() == GeomAbs_Line && std::abs(aMid.Y() - aSide) < 1.e-7)
     {
       aRail = TopoDS::Edge(anIt.Current());
     }
@@ -435,6 +450,7 @@ TEST_P(ChamferSequentialLimit, ConsumeLowerContourAfterUpperChamfer)
   aRail   = TopoDS::Edge(aScaled.ModifiedShape(aRail));
   anArc   = TopoDS::Edge(aScaled.ModifiedShape(anArc));
   aSource = aScaled.Shape();
+  gp_Pln aBottomPlane(gp_Pnt(), gp_Dir(0, 0, 1));
   if (isLocated)
   {
     gp_Trsf aTransform;
@@ -444,19 +460,49 @@ TEST_P(ChamferSequentialLimit, ConsumeLowerContourAfterUpperChamfer)
     aSource.Move(aLocation);
     aRail.Move(aLocation);
     anArc.Move(aLocation);
+    aBottomPlane.Transform(aTransform);
   }
   const double aDistance = (10.0 + (aState - 1) * 0.01) * aScale;
   ASSERT_TRUE(BRepCheck_Analyzer(aSource, true, false, true).IsValid());
   ASSERT_TRUE(BRepAlgoAPI_Check(aSource).IsValid());
   BRepFilletAPI_MakeChamfer aLower(aSource);
-  aLower.Add(aDistance, isReversed ? anArc : aRail);
-  aLower.Add(aDistance, isReversed ? aRail : anArc);
+  NCollection_IndexedDataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>, TopTools_ShapeMapHasher>
+    aSupports;
+  TopExp::MapShapesAndAncestors(aSource, TopAbs_EDGE, TopAbs_FACE, aSupports);
+  const auto addEdge = [&, aSupport = aSupport](const TopoDS_Edge& theEdge) {
+    if (aSupport == 0)
+    {
+      aLower.Add(aDistance, theEdge);
+    }
+    else
+    {
+      const auto& aFaces = aSupports.FindFromKey(theEdge);
+      aLower.Add(aDistance,
+                 aDistance,
+                 theEdge,
+                 TopoDS::Face(aSupport == 1 ? aFaces.First() : aFaces.Last()));
+    }
+  };
+  addEdge(isCompleteLoop && isReversed ? anArc : aRail);
+  if (isCompleteLoop)
+  {
+    addEdge(isReversed ? aRail : anArc);
+  }
+  else
+  {
+    // BothParallelRails-fail.FCStd / Chamfer001 selects only a lower rail:
+    // tangent propagation includes the tip arc and opposite rail, not the
+    // rear arc beneath the boss. The two contour ends must remain supported.
+    ASSERT_EQ(aLower.NbContours(), 1);
+    ASSERT_EQ(aLower.NbEdges(1), 3);
+  }
   std::string aStem;
   if (const char* aDirectory = std::getenv("CHAMFER_LIMIT_OUTPUT"))
   {
     aStem = std::string(aDirectory) + "/sequential-" + std::to_string(aKind) + "-"
             + std::to_string(aState) + "-" + std::to_string(aScaleIndex) + "-"
-            + std::to_string(isLocated) + "-" + std::to_string(isReversed);
+            + std::to_string(isLocated) + "-" + std::to_string(isReversed) + "-"
+            + std::to_string(isCompleteLoop) + "-" + std::to_string(aSupport);
     BRepTools::Write(aSource, (aStem + "-source.brep").c_str());
   }
   ASSERT_NO_THROW(aLower.Build());
@@ -480,6 +526,25 @@ TEST_P(ChamferSequentialLimit, ConsumeLowerContourAfterUpperChamfer)
   ASSERT_TRUE(aLower.IsDone());
   expectClosedManifold(aLower.Shape());
   EXPECT_TRUE(BRepAlgoAPI_Check(aLower.Shape()).IsValid());
+  if (aState == 1 && aKind != 0)
+  {
+    double aBottomArea = 0.0;
+    for (TopExp_Explorer it(aLower.Shape(), TopAbs_FACE); it.More(); it.Next())
+    {
+      BRepAdaptor_Surface aSurface(TopoDS::Face(it.Current()));
+      if (aSurface.GetType() == GeomAbs_Plane
+          && aSurface.Plane().Axis().Direction().IsParallel(aBottomPlane.Axis().Direction(), 1.e-10)
+          && aSurface.Plane().Distance(aBottomPlane.Location()) < 1.e-7 * aScale)
+      {
+        GProp_GProps aProperties;
+        BRepGProp::SurfaceProperties(it.Current(), aProperties);
+        aBottomArea += aProperties.Mass();
+      }
+    }
+    const double anExpectedArea =
+      isCompleteLoop ? 0.0 : std::acos(-1.0) * (aKind == 3 ? 91.0 : 100.0) * aScale * aScale;
+    EXPECT_NEAR(aBottomArea, anExpectedArea, 1.e-6 * aScale * aScale);
+  }
   for (TopExp_Explorer anIt(aLower.Shape(), TopAbs_VERTEX); anIt.More(); anIt.Next())
   {
     EXPECT_LT(BRep_Tool::Tolerance(TopoDS::Vertex(anIt.Current())), 1.e-3 * aScale);
@@ -501,4 +566,39 @@ INSTANTIATE_TEST_SUITE_P(Sequential,
                                           testing::Range(0, 3),
                                           testing::Range(0, 3),
                                           testing::Bool(),
-                                          testing::Bool()));
+                                          testing::Bool(),
+                                          testing::Values(true),
+                                          testing::Values(0)));
+
+// Preserve the complete-perimeter coverage and independently exercise the
+// open U-shaped selection. Vary the remaining boss (cylinder or chamfered cap),
+// below/at/above the limit, scale, placement, seed/order, and reference support.
+INSTANTIATE_TEST_SUITE_P(OpenLowerContour,
+                         ChamferSequentialLimit,
+                         testing::Combine(testing::Values(1, 2),
+                                          testing::Range(0, 3),
+                                          testing::Range(0, 3),
+                                          testing::Bool(),
+                                          testing::Bool(),
+                                          testing::Values(false),
+                                          testing::Values(1, 2)));
+
+INSTANTIATE_TEST_SUITE_P(CompleteLowerLoop,
+                         ChamferSequentialLimit,
+                         testing::Combine(testing::Values(1, 2),
+                                          testing::Range(0, 3),
+                                          testing::Range(0, 3),
+                                          testing::Bool(),
+                                          testing::Bool(),
+                                          testing::Values(true),
+                                          testing::Values(1, 2)));
+
+INSTANTIATE_TEST_SUITE_P(OpenLowerContourWithBore,
+                         ChamferSequentialLimit,
+                         testing::Combine(testing::Values(3),
+                                          testing::Range(0, 3),
+                                          testing::Range(0, 3),
+                                          testing::Bool(),
+                                          testing::Bool(),
+                                          testing::Values(false),
+                                          testing::Values(1, 2)));
