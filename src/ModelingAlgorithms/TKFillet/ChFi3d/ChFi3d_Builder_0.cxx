@@ -50,7 +50,6 @@
 #include <GeomAPI_PointsToBSpline.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
-#include <Extrema_ExtPC.hxx>
 #include <ShapeAnalysis_Curve.hxx>
 #include <TopOpeBRepDS_Point.hxx>
 #include <GeomConvert.hxx>
