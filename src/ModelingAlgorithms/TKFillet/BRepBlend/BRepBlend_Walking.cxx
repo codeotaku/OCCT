@@ -1866,8 +1866,6 @@ void BRepBlend_Walking::InternalPerform(Blend_Function& Func,
     param = parprec + sens * stepw;
   }
 
-  evalpinit(parinit, previousP, parprec, param, infbound, supbound, clasonS1, clasonS2);
-
   while (!Arrive)
   {
     hguide->D1(param, PtOnGuide, TgOnGuide);
@@ -1903,6 +1901,8 @@ void BRepBlend_Walking::InternalPerform(Blend_Function& Func,
     //////////////////////////
 
     bool bonpoint = true;
+    // Re-evaluate after every step change, including guide-deflection reduction above.
+    evalpinit(parinit, previousP, parprec, param, infbound, supbound, clasonS1, clasonS2);
     Func.Set(param);
     rsnld.Perform(Func, parinit, infbound, supbound);
 
@@ -2309,7 +2309,6 @@ void BRepBlend_Walking::InternalPerform(Blend_Function& Func,
             param = Bound;
           }
         }
-        evalpinit(parinit, previousP, parprec, param, infbound, supbound, clasonS1, clasonS2);
       }
       break;
 
@@ -2336,7 +2335,6 @@ void BRepBlend_Walking::InternalPerform(Blend_Function& Func,
         else
         {
           param = parprec + sens * stepw; // on ne risque pas de depasser Bound.
-          evalpinit(parinit, previousP, parprec, param, infbound, supbound, clasonS1, clasonS2);
         }
       }
       break;
@@ -2375,7 +2373,6 @@ void BRepBlend_Walking::InternalPerform(Blend_Function& Func,
             param = Bound;
           }
         }
-        evalpinit(parinit, previousP, parprec, param, infbound, supbound, clasonS1, clasonS2);
       }
       break;
 

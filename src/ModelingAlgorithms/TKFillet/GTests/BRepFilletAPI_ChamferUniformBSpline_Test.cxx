@@ -417,6 +417,26 @@ class BRepFilletAPI_UniformBSplineExplicitFace
 {
 };
 
+class BRepFilletAPI_UniformBSplineGuideSteps
+    : public testing::TestWithParam<std::tuple<int, double, int, int>>
+{
+};
+
+TEST_P(BRepFilletAPI_UniformBSplineGuideSteps, ReducedStepPreservesSectionBranch)
+{
+  const auto [face, degrees, variant, representation] = GetParam();
+  // Guide-curvature rejection must update the Newton predictor to the smaller step.
+  // The other support order, rigid placement, scale and reversed curves preserve the cut.
+  checkUniformBSpline(0, 1, variant, 1., face, false, representation, 4, degrees * M_PI / 180.);
+}
+
+INSTANTIATE_TEST_SUITE_P(ReducedGuideSteps,
+                         BRepFilletAPI_UniformBSplineGuideSteps,
+                         testing::Combine(testing::Values(1, 2),
+                                          testing::Values(45., 60.),
+                                          testing::Values(0, 1, 2),
+                                          testing::Values(0, 4)));
+
 TEST_P(BRepFilletAPI_UniformBSplineExplicitFace, BothSupportOrders)
 {
   const auto [geometry, selection, face, fraction] = GetParam();
