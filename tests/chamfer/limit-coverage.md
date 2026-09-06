@@ -1,15 +1,15 @@
 # Generalized chamfer regression coverage
 
-The issue #1177 stack adds **3,212 registered GTest cases** and three self-contained
+The issue #1177 stack adds **3,539 registered GTest cases** and three self-contained
 DRAW scripts. Parameter combinations are not independent geometric families;
 this is broad contract coverage, not exhaustive surface-pair or branch coverage.
 FreeCAD #12240 is integrated: endpoint handling belongs to the corner stage,
 and its guide/NURBS coverage reuses the B-spline stage's existing smoothing fix.
 
-**Submission blocker from the final readiness pass:** six active reversed-curve
-distance-angle cases in `ReducedGuideSteps` still fail. Five exceed the existing
-vertex-tolerance budget; the 60-degree, doubled-scale case fails surface
-approximation. They are not disabled or counted as passing tests.
+The six reversed-curve distance-angle blockers now pass with the original
+vertex-tolerance budget. The corrections address the inverse angle Jacobian,
+consistent endpoint/restriction coordinates, and cumulative tolerance padding.
+No tests are disabled and no acceptance tolerances are increased.
 
 Configure with `BUILD_GTEST=ON` and build `OpenCascadeGTest`. Sources are registered
 in the existing `TKFillet`, `TKBool`, and `TKGeomAlgo` GTest `FILES.cmake` lists.
@@ -21,7 +21,7 @@ Reconfigure CMake after adding a source to a list.
 | --- | ---: | --- |
 | Corner construction | 145 | 27 valid-precursor failures, 36 local-recoil predicate cases, 32 surface/mode preservation controls and 50 analytic closed-contour cases. |
 | Limit topology | 2,431 | Collapsed contacts, consumed restrictions, shared boundaries/pcurves, partial rims, periodic seams, stationary parameterizations, symmetric tolerance and parameter-unit contracts, invalid over-limit rejection and 360 partial/full lower-contour cases. |
-| B-spline limits | 504 | Guide accuracy, boundary walking and actual-curve verification of polygonal near-tangency; 50 NURBS closed-contour cases and two direct guide-preservation tests. |
+| B-spline limits | 831 | Guide accuracy, boundary walking, inverse chamfer derivatives, measured tolerance propagation and actual-curve verification of polygonal near-tangency; 50 NURBS closed-contour cases and two direct guide-preservation tests. |
 | Oriented chamfer construction | 132 | Walking transitions, independent/connected contours, acute/obtuse sections, reference ordering, per-contour modes, settings, history, editing, reset and recompute. No equivalent-order retry remains. |
 
 ## Test contracts
@@ -46,7 +46,9 @@ Reconfigure CMake after adding a source to a list.
 | `TopOpeBRepBuild_ClosedRestriction_Test` | 48 | Closed circle/ellipse/rational B-spline restrictions with independent seam vertices. Check shared split edges, preserved vertices/length/tolerances, repeated records, reversal and placement. |
 | `TopOpeBRepDS_SharedPCurve_Test` | 36 | Plane, cylinder and Bezier-extrusion supports; nonlinear/rescaled/reversed pcurves, locations and serialization. Check reached geometric error, not just SameParameter flags. |
 | `TopOpeBRepDS_BuildTool_Test` — added case | 1 | Shared-edge pcurve parameter consistency for ordinary, reversed and partial reuse. Existing tests in this file are not counted as additions. |
-| `BRepFilletAPI_ChamferUniformBSpline_Test` | 444 | Two constant-normal-width rings. Outer 2 mm, inner 2 mm and paired 1 mm limits; 72 nominal/placement/state cases, 48 explicit-reference cases, 24 serialization cases, 24 equivalent representations, 54 independent seams, 12 seam neighbors and 78 guide-accuracy cases; 108 distance-angle mode/reference/state cases and 24 guide-step reduction controls across support order, angle, rigid placement, scale and curve reversal. Twelve cases also simulate sections before building. |
+| `BRepFilletAPI_ChamferUniformBSpline_Test` | 456 | Two constant-normal-width rings. Outer 2 mm, inner 2 mm and paired 1 mm limits; 72 nominal/placement/state cases, 48 explicit-reference cases, 24 serialization cases, 24 equivalent representations, 54 independent seams, 12 seam neighbors and 78 guide-accuracy cases; 108 distance-angle mode/reference/state cases and 36 guide-step reduction controls across support order, angle, rigid placement, scale and curve reversal. Twelve cases also simulate sections before building. |
+| `BlendFunc_ChAsymInv_Test` | 288 | Check all 16 Jacobian entries against central differences of the residual, including separate/combined derivative APIs. Both restrictions and support orders, four orientation choices, three scales, rigid rotation and straight/circular/elliptical guides. Straight-guide controls distinguish the missing guide-normal derivative. |
+| `BRepFilletAPI_ChamferTolerance_Test` | 27 | Exact-limit chamfers consume original slab vertices: one/two/four top edges, three scales and three input tolerances around the former fixed threshold. Require BRep/BOP validity and bounded vertex tolerances; visits to shared vertices must not accumulate fixed padding. |
 | `Geom2dInt_ClosedTangency_Test` | 8 | Separated periodic normal offsets at three gaps and both directions, each with three tolerances; preserve genuine crossing, tangent and coincident controls. |
 | `BRepFilletAPI_ChamferMatrix_Test` — ordering cases | 6 | Every plane/extrusion boundary/reference, unequal distance ratios, reversed edges, transforms, multiple and mixed-method contours, generated history, parameter queries, edits and rebuilding. |
 | `ChFi3d_ChamferConfiguration` | 12 | Both support orders, all three future default modes, base/derived configuration, repeated build, distance edit, explicit reset and later base-API parameter edits. Preserve settings, classic contour mode, valid material removal and reference volume. No production-only test accessors remain. |
@@ -110,13 +112,28 @@ the existing predictor now runs once immediately before solving, replacing four
 scattered calls. This is shared walking logic, so existing fillet coverage is
 retained. No new projection, solver or face-classification cache is introduced.
 
-The additional 24 guide-step controls have ten failures with the widened gate
-alone and six after predictor correction. Those six already failed before the
-predictor change: reversed curves, first support, 45/60 degrees, three placements.
-Five construct BRep/BOP-valid solids but exceed the unchanged 2.5e-4-times-scale
-vertex-tolerance budget (about 0.00087–0.00108 mm at unit scale); the remaining
-60-degree, doubled-scale case fails approximation. The root of this remaining
-approximation/accuracy gap has not yet been established. Submission is blocked.
+The additional 24 guide-step controls had ten failures with the widened gate
+alone and six after predictor correction: reversed curves, first support,
+45/60 degrees, three placements. The latest corrections resolve all six without
+relaxing the 2.5e-4-times-scale vertex budget. The inverse angle Jacobian used a
+temporary distance-gradient vector instead of the differentiated cross product.
+An endpoint correction then changed the guide parameter without updating the
+other contact's UV/restriction parameter. Finally, tolerance propagation added
+fixed padding on every visit to a shared vertex.
+
+The blocker pass adds 327 cases: 288 direct Jacobian checks, 27 tolerance controls
+and 12 acute-angle integration controls. Before correction, 192 curved-guide
+Jacobian cases and 18 above-threshold tolerance cases fail; all 315 pass afterward.
+The 96 straight-guide Jacobian cases and nine below-threshold tolerance cases
+are preservation controls. The 12 acute-angle integration cases also pass.
+The Jacobian expression is shared between restriction orders, endpoint projection
+reuses `BRepBlend_BlendTool::Project`, and only measured tolerances are propagated.
+The three production files have a net-zero line change (+22/-22).
+
+PR #1507 was checked at commit 8d23b491c74b1bad61184d31dd4859c716aba8d8. Its
+walking changes handle open guides on conical periodic supports, not these closed
+guides on closed, non-periodic B-spline extrusions. No seam-unwrapping helper or
+code from that PR is duplicated here.
 
 ## DRAW issue tests
 
