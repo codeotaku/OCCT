@@ -85,14 +85,18 @@ bool TopOpeBRepBuild_Tools::HasCompleteCoincidence(const Geom2dInt_GInter&    th
   const double aLastOnFirst   = aSegment.LastPoint().ParamOnFirst();
   const double aFirstOnSecond = aSegment.FirstPoint().ParamOnSecond();
   const double aLastOnSecond  = aSegment.LastPoint().ParamOnSecond();
+  // Geometric precision is not a parameter distance for a scaled or nonlinear curve.
+  const double aFirstTolerance  = theFirstCurve.Resolution(theTolerance);
+  const double aSecondTolerance = theSecondCurve.Resolution(theTolerance);
   const bool   isComplete =
-    std::abs(std::min(aFirstOnFirst, aLastOnFirst) - theFirstCurve.FirstParameter()) <= theTolerance
+    std::abs(std::min(aFirstOnFirst, aLastOnFirst) - theFirstCurve.FirstParameter())
+      <= aFirstTolerance
     && std::abs(std::max(aFirstOnFirst, aLastOnFirst) - theFirstCurve.LastParameter())
-         <= theTolerance
+         <= aFirstTolerance
     && std::abs(std::min(aFirstOnSecond, aLastOnSecond) - theSecondCurve.FirstParameter())
-         <= theTolerance
+         <= aSecondTolerance
     && std::abs(std::max(aFirstOnSecond, aLastOnSecond) - theSecondCurve.LastParameter())
-         <= theTolerance;
+         <= aSecondTolerance;
   if (isComplete)
   {
     theIsReversed = (aLastOnFirst - aFirstOnFirst) * (aLastOnSecond - aFirstOnSecond) < 0.0;

@@ -261,7 +261,7 @@ static bool IsConsumedByCoincidentCurves(
   }
   for (int aStateIndex = 0; aStateIndex < 2; ++aStateIndex)
   {
-    const TopAbs_State                aState = aStateIndex == 0 ? TopAbs_IN : TopAbs_OUT;
+    const TopAbs_State aState = aStateIndex == 0 ? TopAbs_IN : TopAbs_OUT;
     NCollection_DataMap<TopoDS_Shape, int, TopTools_ShapeMapHasher> anOrientationMasks;
     FillEquivalentCurveOrientationMasks(theFace,
                                         aState,
@@ -390,7 +390,7 @@ void TopOpeBRepBuild_Builder::AddIntersectionEdges(TopoDS_Shape&             aFa
     const NCollection_List<TopoDS_Shape>& LnewE = NewEdges(iC);
     for (NCollection_List<TopoDS_Shape>::Iterator Iti(LnewE); Iti.More(); Iti.Next())
     {
-      anEdge                    = Iti.Value();
+      anEdge = Iti.Value();
       if (aConsumedCurveGroups.IsBound(anEdge) && aConsumedCurveGroups(anEdge) == 3)
       {
         continue;

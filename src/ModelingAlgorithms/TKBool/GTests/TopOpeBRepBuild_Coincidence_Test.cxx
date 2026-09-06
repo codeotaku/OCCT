@@ -219,7 +219,7 @@ TEST_P(TopOpeBRepBuild_StationaryCoincidence, ValidParameterizationPreservesDire
   {
     aSecond->Reverse();
   }
-  TopoDS_Edge aFirstEdge = placedEdge(BRepBuilderAPI_MakeEdge(aFirst), aPlacement);
+  TopoDS_Edge aFirstEdge  = placedEdge(BRepBuilderAPI_MakeEdge(aFirst), aPlacement);
   TopoDS_Edge aSecondEdge = placedEdge(BRepBuilderAPI_MakeEdge(aSecond), aPlacement);
   if (isFirstReversed)
   {

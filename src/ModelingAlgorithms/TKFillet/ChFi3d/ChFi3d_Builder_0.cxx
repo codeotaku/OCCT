@@ -51,6 +51,8 @@
 #include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <Extrema_ExtPC.hxx>
+#include <ShapeAnalysis_Curve.hxx>
+#include <TopOpeBRepDS_Point.hxx>
 #include <GeomConvert.hxx>
 #include <GeomConvert_CompCurveToBSplineCurve.hxx>
 #include <GeomFill_SimpleBound.hxx>
@@ -1289,10 +1291,20 @@ bool ChFi3d_IntTraces(const occ::handle<ChFiDS_SurfData>& fd1,
     p2 = pref2;
     if (isPoint1 && isPoint2)
     {
-      return aFirst.Point().SquareDistance(fd2->Vertex(true, jf2).Point())
-               <= aTolerance * aTolerance
-             && aFirst.Point().SquareDistance(fd2->Vertex(false, jf2).Point())
-                  <= aTolerance * aTolerance;
+      const auto&  aSecondFirst = fd2->Vertex(true, jf2);
+      const auto&  aSecondLast  = fd2->Vertex(false, jf2);
+      const double aSecondTolerance =
+        std::max(Precision::Confusion(),
+                 std::max(aSecondFirst.Tolerance(), aSecondLast.Tolerance()));
+      const TopOpeBRepDS_Point aPoint(aFirst.Point(), aTolerance);
+      const TopOpeBRepDS_Point aSecondPoint(aSecondFirst.Point(), aSecondTolerance);
+      // Validate each collapse independently before comparing the two contacts.
+      return aSecondPoint.IsEqual(TopOpeBRepDS_Point(aSecondLast.Point(), aSecondTolerance))
+             && aPoint.IsEqual(aSecondPoint)
+             && aPoint.IsEqual(TopOpeBRepDS_Point(aSecondLast.Point(), aSecondTolerance))
+             && TopOpeBRepDS_Point(aLast.Point(), aTolerance).IsEqual(aSecondPoint)
+             && TopOpeBRepDS_Point(aLast.Point(), aTolerance)
+                  .IsEqual(TopOpeBRepDS_Point(aSecondLast.Point(), aSecondTolerance));
     }
     const auto& aCurveFI  = (isPoint1 ? fd2 : fd1)->Interference(isPoint1 ? jf2 : jf1);
     double      aFirstPar = aCurveFI.FirstParameter(), aLastPar = aCurveFI.LastParameter();
@@ -1310,27 +1322,12 @@ bool ChFi3d_IntTraces(const occ::handle<ChFiDS_SurfData>& fd1,
       new Geom2dAdaptor_Curve(aCurveFI.PCurveOnFace(), aFirstPar, aLastPar);
     occ::handle<BRepAdaptor_Surface> aSurface = new BRepAdaptor_Surface(*theSupport);
     Adaptor3d_CurveOnSurface         aTrace(aPCurve, aSurface);
-    Extrema_ExtPC                    anExtrema(aFirst.Point(), aTrace, aTolerance);
-    if (!anExtrema.IsDone())
-    {
-      return false;
-    }
-    int    anIndex   = 0;
-    double aDistance = aTolerance * aTolerance;
-    for (int anExtremumIndex = 1; anExtremumIndex <= anExtrema.NbExt(); ++anExtremumIndex)
-    {
-      if (anExtrema.SquareDistance(anExtremumIndex) <= aDistance)
-      {
-        aDistance = anExtrema.SquareDistance(anExtremumIndex);
-        anIndex   = anExtremumIndex;
-      }
-    }
-    if (anIndex == 0)
-    {
-      return false;
-    }
-    (isPoint1 ? p2 : p1) = anExtrema.Point(anIndex).Parameter();
-    return true;
+    gp_Pnt                           aProjected;
+    double&                          aParameter = isPoint1 ? p2 : p1;
+    // The projector may extrapolate an analytic curve beyond its adaptor bounds.
+    return ShapeAnalysis_Curve().Project(aTrace, aFirst.Point(), aTolerance, aProjected, aParameter)
+             <= aTolerance
+           && aParameter >= aFirstPar && aParameter <= aLastPar;
   }
   Geom2dAdaptor_Curve C1;
   Geom2dAdaptor_Curve C2;
@@ -3463,7 +3460,6 @@ bool ChFi3d_HasTransversalIntersection(const Geom2dInt_GInter& theIntersector)
 
 //=======================================================================
 
-
 //=======================================================================
 
 bool ChFi3d_HasCommonEndpoint(const Geom2dInt_GInter&    theIntersector,
@@ -3608,7 +3604,7 @@ void ChFi3d_StripeEdgeInter(const occ::handle<ChFiDS_Stripe>& theStripe1,
                                    aFI2.FirstParameter(),
                                    aFI2.LastParameter());
       anIntersector.Perform(aPCurve1, aPCurve2, tol2d, Precision::PConfusion());
-      bool isReversed = false;
+      bool isReversed   = false;
       bool isCoincident = TopOpeBRepBuild_Tools::HasCompleteCoincidence(anIntersector,
                                                                         aPCurve1,
                                                                         aPCurve2,

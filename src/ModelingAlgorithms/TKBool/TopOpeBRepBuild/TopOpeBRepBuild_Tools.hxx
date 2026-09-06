@@ -47,7 +47,8 @@ public:
   DEFINE_STANDARD_ALLOC
 
   //! Whether one bounded intersection segment covers both complete parameter
-  //! ranges. theTolerance is parametric, not a distance in 3D. No intersection
+  //! ranges. theTolerance is a distance in the curves' 2D space; each adaptor
+  //! converts it to its own parameter resolution. No intersection
   //! or projection is performed here; callers supply an existing result.
   Standard_EXPORT static bool HasCompleteCoincidence(const Geom2dInt_GInter&    theIntersector,
                                                      const Geom2dAdaptor_Curve& theFirstCurve,

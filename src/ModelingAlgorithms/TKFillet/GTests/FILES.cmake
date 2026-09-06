@@ -9,6 +9,7 @@ set(OCCT_TKFillet_GTests_FILES
   BRepFilletAPI_ChamferMultiWire_Test.cxx
   BRepFilletAPI_ChamferTangentBoss_Test.cxx
   ChFi3d_Contact_Test.cxx
+  ChFi3d_CollapsedTrace_Test.cxx
   BRepFilletAPI_ChamferMatrix_Test.cxx
   BRepFilletAPI_MakeChamfer_Test.cxx
   BRepFilletAPI_MakeFillet_Test.cxx

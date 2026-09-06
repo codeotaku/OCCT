@@ -3459,11 +3459,11 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
         }
         Extrema_ExtPC ext(pext, cad, tolpt);
         double        par1, par2, par, ParVtx;
-        bool          vtx1 = false;
-        bool          vtx2 = false;
+        bool          vtx1        = false;
+        bool          vtx2        = false;
         bool          isIndVertex = Isvtx2;
-        par1               = ext.Point(1).Parameter();
-        ParVtx             = par1;
+        par1                      = ext.Point(1).Parameter();
+        ParVtx                    = par1;
         if (oneintersection1 || oneintersection2)
         {
           if (oneintersection2)
@@ -3473,8 +3473,8 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
           }
           else
           {
-            pext = CV1.Point();
-            ind  = indpoint1;
+            pext        = CV1.Point();
+            ind         = indpoint1;
             isIndVertex = Isvtx1;
           }
           Extrema_ExtPC ext2(pext, cad, tolpt);
@@ -3494,8 +3494,8 @@ void ChFi3d_Builder::PerformIntersectionAtEnd(const int Index)
           // complementary arc through its last endpoint.
           const double aPeriod = cad.Period();
           par1                 = ElCLib::InPeriod(par1,
-                                                  ubid - Precision::PConfusion(),
-                                                  ubid + aPeriod - Precision::PConfusion());
+                                  ubid - Precision::PConfusion(),
+                                  ubid + aPeriod - Precision::PConfusion());
           if (TopExp::FirstVertex(edgesau).IsSame(Vtx))
           {
             par2 = ElCLib::InPeriod(par2, par1 - aPeriod, par1);

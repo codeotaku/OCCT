@@ -109,6 +109,22 @@ static void Reduce(const double& p1, const double& p2, occ::handle<GeomAdaptor_C
 bool ChFi3d_Builder::PerformTwoCornerbyInter(const int Index)
 
 {
+  const auto projectPole = [](const ChFiDS_FaceInterference& theInterference,
+                              const gp_Pnt2d&                thePoint,
+                              double&                        theParameter) {
+    if (!theInterference.PCurveOnFace().IsNull())
+    {
+      return true;
+    }
+    Geom2dAPI_ProjectPointOnCurve aProjection(thePoint, theInterference.PCurveOnSurf());
+    if (aProjection.NbPoints() == 0)
+    {
+      return false;
+    }
+    theParameter = aProjection.LowerDistanceParameter();
+    return true;
+  };
+
   done                             = false;
   const TopoDS_Vertex&        Vtx  = myVDataMap.FindKey(Index);
   TopOpeBRepDS_DataStructure& DStr = myDS->ChangeDS();
@@ -385,27 +401,11 @@ bool ChFi3d_Builder::PerformTwoCornerbyInter(const int Index)
     // A pole has an arbitrary initial U. Match the collapsed surface trace
     // to the actual intersection pcurve before trimming its degenerate edge.
     const double aCommonEnd = IFaCo1 == 1 ? Gc->FirstParameter() : Gc->LastParameter();
-    if (Fd1->Interference(IFaCo1).PCurveOnFace().IsNull())
+    if (!projectPole(Fd1->Interference(IFaCo1), PGc1->Value(aCommonEnd), UIntPC1)
+        || !projectPole(Fd2->Interference(IFaCo2), PGc2->Value(aCommonEnd), UIntPC2))
     {
-      Geom2dAPI_ProjectPointOnCurve aProjection(PGc1->Value(aCommonEnd),
-                                                Fd1->Interference(IFaCo1).PCurveOnSurf());
-      if (aProjection.NbPoints() == 0)
-      {
-        done = false;
-        return done;
-      }
-      UIntPC1 = aProjection.LowerDistanceParameter();
-    }
-    if (Fd2->Interference(IFaCo2).PCurveOnFace().IsNull())
-    {
-      Geom2dAPI_ProjectPointOnCurve aProjection(PGc2->Value(aCommonEnd),
-                                                Fd2->Interference(IFaCo2).PCurveOnSurf());
-      if (aProjection.NbPoints() == 0)
-      {
-        done = false;
-        return done;
-      }
-      UIntPC2 = aProjection.LowerDistanceParameter();
+      done = false;
+      return done;
     }
     // CornerData are updated with results of the intersection.
     double              WFirst = Gc->FirstParameter();
@@ -611,27 +611,13 @@ bool ChFi3d_Builder::PerformTwoCornerbyInter(const int Index)
       done = false;
       return done;
     }
-    if (SmaFD->Interference(IFaCoSma).PCurveOnFace().IsNull())
+    if (!projectPole(SmaFD->Interference(IFaCoSma), PGc1->Value(Gc->FirstParameter()), UIntPCSma)
+        || !projectPole(BigFD->Interference(IFaCoBig),
+                        PGc2->Value(Gc->FirstParameter()),
+                        UIntPCBig))
     {
-      Geom2dAPI_ProjectPointOnCurve aProjection(PGc1->Value(Gc->FirstParameter()),
-                                                SmaFD->Interference(IFaCoSma).PCurveOnSurf());
-      if (aProjection.NbPoints() == 0)
-      {
-        done = false;
-        return done;
-      }
-      UIntPCSma = aProjection.LowerDistanceParameter();
-    }
-    if (BigFD->Interference(IFaCoBig).PCurveOnFace().IsNull())
-    {
-      Geom2dAPI_ProjectPointOnCurve aProjection(PGc2->Value(Gc->FirstParameter()),
-                                                BigFD->Interference(IFaCoBig).PCurveOnSurf());
-      if (aProjection.NbPoints() == 0)
-      {
-        done = false;
-        return done;
-      }
-      UIntPCBig = aProjection.LowerDistanceParameter();
+      done = false;
+      return done;
     }
     // SmaCD is updated, for it this is all.
     double              WFirst = Gc->FirstParameter();

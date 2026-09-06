@@ -95,7 +95,6 @@ bool TopOpeBRepBuild_CurveRange(const TopOpeBRepDS_Curve&        theCurve,
   return false;
 }
 
-
 bool TopOpeBRepBuild_FindCurveEnd(const occ::handle<TopOpeBRepDS_HDataStructure>& theHDS,
                                   const int                                       theCurveIndex,
                                   const bool                                      theCurveStart,
@@ -400,9 +399,9 @@ void TopOpeBRepBuild_Builder::BuildEdges(const occ::handle<TopOpeBRepDS_HDataStr
           }
           Geom2dAdaptor_Curve aRestriction(aPCurve, aFirst, aLast);
           Geom2dInt_GInter    anIntersector(aNewCurve,
-                                            aRestriction,
-                                            Precision::PConfusion(),
-                                            Precision::PConfusion());
+                                         aRestriction,
+                                         Precision::PConfusion(),
+                                         Precision::PConfusion());
           bool                isReversed = false;
           if (TopOpeBRepBuild_Tools::HasCompleteCoincidence(anIntersector,
                                                             aNewCurve,

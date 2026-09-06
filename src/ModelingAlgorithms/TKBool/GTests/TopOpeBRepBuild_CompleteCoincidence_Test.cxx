@@ -7,6 +7,7 @@
 #include <Geom2d_Circle.hxx>
 #include <Geom2d_BezierCurve.hxx>
 #include <Geom2d_TrimmedCurve.hxx>
+#include <Geom2d_BSplineCurve.hxx>
 #include <TopOpeBRepBuild_Tools.hxx>
 #include <IntRes2d_IntersectionSegment.hxx>
 #include <gtest/gtest.h>
@@ -68,12 +69,13 @@ TEST_P(TopOpeBRepBuild_CompleteCoincidence, CoversBothRangesWithinCallerToleranc
     poles(4) = gp_Pnt2d(10, 0);
     curve    = new Geom2d_BezierCurve(poles);
   }
-  constexpr double                tolerance  = 1.e-6;
-  const double                    shortening = relation == 0   ? 0.
-                                               : relation == 1 ? .1
-                                               : relation == 2 ? .5 * tolerance
-                                                               : 4 * tolerance;
-  const occ::handle<Geom2d_Curve> first      = new Geom2d_TrimmedCurve(curve, .2, .8);
+  constexpr double tolerance            = 1.e-6;
+  const double     parameterTolerance   = Geom2dAdaptor_Curve(curve).Resolution(tolerance);
+  const double     shortening           = relation == 0   ? 0.
+                                          : relation == 1 ? .1
+                                          : relation == 2 ? .5 * parameterTolerance
+                                                          : 4 * parameterTolerance;
+  const occ::handle<Geom2d_Curve> first = new Geom2d_TrimmedCurve(curve, .2, .8);
   const occ::handle<Geom2d_Curve> second =
     new Geom2d_TrimmedCurve(curve, .2 + shortening, .8 - shortening);
   if (reversed)
@@ -137,4 +139,92 @@ TEST(TopOpeBRepBuild_CompleteCoincidenceControl, IncompleteAndAmbiguousRecordsAr
     EXPECT_FALSE(
       TopOpeBRepBuild_Tools::HasCompleteCoincidence(intersection, a, a, 1.e-7, reversed));
   }
+}
+
+class TopOpeBRepBuild_CoincidenceParameterization
+    : public testing::TestWithParam<std::tuple<double, bool, int, bool, bool>>
+{
+};
+
+TEST_P(TopOpeBRepBuild_CoincidenceParameterization, CoverageDependsOnGeometryNotParameterScale)
+{
+  const auto [aRange, isNonlinear, aRelation, isReversed, isSwapped] = GetParam();
+  for (const double aTolerance : {Precision::PConfusion(), 1.e-7})
+  {
+    const double aLength2 = aRelation == 0 ? 10. : aRelation == 1 ? 9. : 10. - .25 * aTolerance;
+    const auto   makeSegment =
+      [](const double theLength, const bool theNonlinear, const double theRange) {
+        const int                    aDegree = theNonlinear ? 3 : 1;
+        NCollection_Array1<gp_Pnt2d> aPoles(1, aDegree + 1);
+        for (int i = 1; i <= aDegree + 1; ++i)
+        {
+          aPoles(i) = gp_Pnt2d(i == aDegree + 1 ? theLength : 0., 0.);
+        }
+        NCollection_Array1<double> aKnots(1, 2);
+        aKnots(1) = 0.;
+        aKnots(2) = theRange;
+        NCollection_Array1<int> aMultiplicities(1, 2);
+        aMultiplicities(1) = aMultiplicities(2) = aDegree + 1;
+        return new Geom2d_BSplineCurve(aPoles, aKnots, aMultiplicities, aDegree);
+      };
+    const occ::handle<Geom2d_Curve> aFirst  = makeSegment(10., false, aRange);
+    const occ::handle<Geom2d_Curve> aSecond = makeSegment(aLength2, isNonlinear, aRange);
+    if (isReversed)
+      aSecond->Reverse();
+    const Geom2dAdaptor_Curve a(isSwapped ? aSecond : aFirst), b(isSwapped ? aFirst : aSecond);
+    // Exact contact record, independent of the intersector's treatment of very short
+    // parameter ranges. The straight-curve control below also runs the actual intersector.
+    const double             aEndOnFirst    = aLength2 / 10. * aRange;
+    const double             aStartOnSecond = isReversed ? aRange : 0.;
+    const double             aEndOnSecond   = isReversed ? 0. : aRange;
+    const CachedIntersection anIntersection(a,
+                                            isSwapped ? aStartOnSecond : 0.,
+                                            isSwapped ? aEndOnSecond : aEndOnFirst,
+                                            isSwapped ? 0. : aStartOnSecond,
+                                            isSwapped ? aEndOnFirst : aEndOnSecond,
+                                            isReversed);
+    ASSERT_TRUE(anIntersection.IsDone());
+    bool       isOpposite = false;
+    const bool isComplete =
+      TopOpeBRepBuild_Tools::HasCompleteCoincidence(anIntersection, a, b, aTolerance, isOpposite);
+    EXPECT_EQ(isComplete, aRelation != 1);
+    if (isComplete)
+      EXPECT_EQ(isOpposite, isReversed);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(GeometricRanges,
+                         TopOpeBRepBuild_CoincidenceParameterization,
+                         testing::Combine(testing::Values(1., 1.e-4, 1.e-6, 1.e-7, 1.e-8, 5.e-9),
+                                          testing::Bool(),
+                                          testing::Range(0, 3),
+                                          testing::Bool(),
+                                          testing::Bool()));
+
+TEST(TopOpeBRepBuild_CompleteCoincidenceControl, ActualIntersectionRetainsUnmatchedTail)
+{
+  for (double aRange : {1., 1.e-4, 1.e-6, 1.e-7, 1.e-8, 5.e-9})
+    for (double aTolerance : {Precision::PConfusion(), 1.e-7})
+    {
+      NCollection_Array1<double> aKnots(1, 2);
+      aKnots(1) = 0.;
+      aKnots(2) = aRange;
+      NCollection_Array1<int> aMultiplicities(1, 2);
+      aMultiplicities(1) = aMultiplicities(2) = 2;
+      NCollection_Array1<gp_Pnt2d> aPoles(1, 2);
+      aPoles(1) = gp_Pnt2d();
+      aPoles(2) = gp_Pnt2d(10, 0);
+      const Geom2dAdaptor_Curve a(new Geom2d_BSplineCurve(aPoles, aKnots, aMultiplicities, 1));
+      aPoles(2) = gp_Pnt2d(9, 0);
+      const Geom2dAdaptor_Curve b(new Geom2d_BSplineCurve(aPoles, aKnots, aMultiplicities, 1));
+      const Geom2dInt_GInter    anIntersection(a, b, aTolerance, aTolerance);
+      ASSERT_TRUE(anIntersection.IsDone());
+      ASSERT_EQ(anIntersection.NbSegments(), 1);
+      bool isReversed = false;
+      EXPECT_FALSE(TopOpeBRepBuild_Tools::HasCompleteCoincidence(anIntersection,
+                                                                 a,
+                                                                 b,
+                                                                 aTolerance,
+                                                                 isReversed));
+    }
 }

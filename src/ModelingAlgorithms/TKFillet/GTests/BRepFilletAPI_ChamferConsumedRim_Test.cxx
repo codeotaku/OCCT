@@ -38,7 +38,7 @@ class BRepFilletAPI_ConsumedRim : public ::testing::TestWithParam<std::tuple<int
 TEST_P(BRepFilletAPI_ConsumedRim, ValidClosedSolidAtHalfWallThickness)
 {
   const auto [aSelection, aDistance] = GetParam();
-  const TopoDS_Shape aSource = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(12., 10., 4.),
+  const TopoDS_Shape aSource         = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(12., 10., 4.),
                                                BRepPrimAPI_MakeBox(gp_Pnt(1., 1., 1.), 10., 8., 4.))
                                  .Shape();
   ASSERT_TRUE(BRepCheck_Analyzer(aSource).IsValid());
