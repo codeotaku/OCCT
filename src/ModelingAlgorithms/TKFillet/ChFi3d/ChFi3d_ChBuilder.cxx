@@ -53,7 +53,6 @@
 #include <TopoDS_Vertex.hxx>
 #include <TopOpeBRepBuild_HBuilder.hxx>
 #include <TopOpeBRepDS_HDataStructure.hxx>
-#include <TopExp.hxx>
 #include <memory>
 
 //=======================================================================
