@@ -2154,9 +2154,21 @@ void BRepBlend_Walking::InternalPerform(Blend_Function& Func,
             CorrectExtremityOnOneRst(1, sol(3), sol(4), param, Pnt1, NewU, NewV, NewPnt, NewParam);
           if (Corrected)
           {
-            if (std::abs(param - NewParam) < std::abs(param - theParam))
+            // Keep both the section and its restriction parameter at the corrected endpoint.
+            double aParameter, aDistance;
+            if (BRepBlend_BlendTool::Project(gp_Pnt2d(NewU, NewV),
+                                             surf2,
+                                             recdomain2->Value(),
+                                             aParameter,
+                                             aDistance)
+                && aDistance <= std::min(tolerance(3), tolerance(4))
+                && std::abs(param - NewParam) <= std::abs(param - theParam) + tolgui)
             {
-              theParam = NewParam;
+              theParam   = NewParam;
+              solrst2(1) = aParameter;
+              p2d        = recdomain2->Value()->Value(aParameter);
+              sol(3)     = p2d.X();
+              sol(4)     = p2d.Y();
             }
           }
 

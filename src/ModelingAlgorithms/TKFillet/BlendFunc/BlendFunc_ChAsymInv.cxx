@@ -256,9 +256,10 @@ bool BlendFunc_ChAsymInv::ComputeValues(const math_Vector& X, const int DegF, co
 
   if (DegL == 1)
   {
-    gp_Vec dwtsurf1, tempVec;
-    double temp;
-    gp_Vec nps2(ptgui, pts2);
+    const gp_Vec dwtsurf1 = Nsurf1.Crossed(dnplan);
+    gp_Vec       tempVec;
+    double       temp;
+    gp_Vec       nps2(ptgui, pts2);
 
     if (first)
     {
@@ -267,7 +268,6 @@ bool BlendFunc_ChAsymInv::ComputeValues(const math_Vector& X, const int DegF, co
       dw1du1   = v2d.X() * d2u1 + v2d.Y() * d2uv1;
       dw1dv1   = v2d.X() * d2uv1 + v2d.Y() * d2v1;
       dw1csurf = (dw1du1.Crossed(d1v1) + d1u1.Crossed(dw1dv1)).Crossed(nplan);
-      dwtsurf1 = Nsurf1.Crossed(dnplan);
 
       DX(1, 1) = nplan.Dot(dw1pts1);
       DX(1, 2) = dnplan.Dot(nps1) - Normg;
@@ -289,9 +289,6 @@ bool BlendFunc_ChAsymInv::ComputeValues(const math_Vector& X, const int DegF, co
       temp += nplan.Dot(tsurf1.Crossed(dw1pts1) - dw1csurf.Crossed(s1s2));
       DX(4, 1) = PScaInv * temp;
 
-      temp = F4 * dwtsurf1.Dot(s1s2);
-      temp -= dnplan.Dot(tempVec) + nplan.Dot(dwtsurf1.Crossed(s1s2));
-      DX(4, 2) = PScaInv * temp;
       temp     = F4 * tsurf1.Dot(d1u2) - nplan.Dot(tsurf1.Crossed(d1u2));
       DX(4, 3) = PScaInv * temp;
 
@@ -304,7 +301,6 @@ bool BlendFunc_ChAsymInv::ComputeValues(const math_Vector& X, const int DegF, co
       d1utsurf1 = (d2u1.Crossed(d1v1) + d1u1.Crossed(d2uv1)).Crossed(nplan);
       d1vtsurf1 = (d2uv1.Crossed(d1v1) + d1u1.Crossed(d2v1)).Crossed(nplan);
       dw2pts2   = v2d.X() * d1u2 + v2d.Y() * d1v2;
-      dwtsurf1  = Nsurf1.Crossed(dnplan);
 
       DX(1, 1) = 0.;
       DX(1, 2) = dnplan.Dot(nps1) - Normg;
@@ -327,10 +323,6 @@ bool BlendFunc_ChAsymInv::ComputeValues(const math_Vector& X, const int DegF, co
       temp     = F4 * tsurf1.Dot(dw2pts2) - nplan.Dot(tsurf1.Crossed(dw2pts2));
       DX(4, 1) = PScaInv * temp;
 
-      temp = F4 * dwtsurf1.Dot(s1s2);
-      temp -= dnplan.Dot(tempVec) + nplan.Dot(dwtsurf1.Crossed(s1s2));
-      DX(4, 2) = PScaInv * temp;
-
       temp = F4 * (d1utsurf1.Dot(s1s2) - tsurf1.Dot(d1u1));
       temp += nplan.Dot(tsurf1.Crossed(d1u1) - d1utsurf1.Crossed(s1s2));
       DX(4, 3) = PScaInv * temp;
@@ -339,6 +331,10 @@ bool BlendFunc_ChAsymInv::ComputeValues(const math_Vector& X, const int DegF, co
       temp += nplan.Dot(tsurf1.Crossed(d1v1) - d1vtsurf1.Crossed(s1s2));
       DX(4, 4) = PScaInv * temp;
     }
+    // The guide derivative differentiates the same angle quotient on either restriction.
+    DX(4, 2) = PScaInv
+               * (F4 * dwtsurf1.Dot(s1s2) - dnplan.Dot(tsurf1.Crossed(s1s2))
+                  - nplan.Dot(dwtsurf1.Crossed(s1s2)));
   }
 
   return true;

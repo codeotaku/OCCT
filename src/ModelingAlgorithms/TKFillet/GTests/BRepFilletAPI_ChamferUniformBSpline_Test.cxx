@@ -437,6 +437,13 @@ INSTANTIATE_TEST_SUITE_P(ReducedGuideSteps,
                                           testing::Values(0, 1, 2),
                                           testing::Values(0, 4)));
 
+INSTANTIATE_TEST_SUITE_P(AcuteSections,
+                         BRepFilletAPI_UniformBSplineGuideSteps,
+                         testing::Combine(testing::Values(1, 2),
+                                          testing::Values(30.),
+                                          testing::Values(0, 1, 2),
+                                          testing::Values(0, 4)));
+
 TEST_P(BRepFilletAPI_UniformBSplineExplicitFace, BothSupportOrders)
 {
   const auto [geometry, selection, face, fraction] = GetParam();

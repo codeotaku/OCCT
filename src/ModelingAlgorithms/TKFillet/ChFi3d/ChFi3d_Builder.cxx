@@ -356,14 +356,6 @@ void ChFi3d_Builder::Compute()
           {
             const TopoDS_Vertex& v    = TopoDS::Vertex(myDS->Shape(gi));
             double               tolv = BRep_Tool::Tolerance(v);
-            if (tolv > 0.0001)
-            {
-              tolv += 0.0003;
-              if (tolc < tolv)
-              {
-                tolc = tolv + 0.00001;
-              }
-            }
             if (degen && tolc < tolv)
             {
               tolc = tolv;
