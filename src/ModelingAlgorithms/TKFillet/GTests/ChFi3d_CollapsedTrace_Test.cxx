@@ -1,5 +1,15 @@
 // Copyright (c) 2026 OPEN CASCADE SAS
-// SPDX-License-Identifier: LGPL-2.1-only WITH OCCT-exception-1.0
+//
+// This file is part of Open CASCADE Technology software library.
+//
+// This library is free software; you can redistribute it and/or modify it under
+// the terms of the GNU Lesser General Public License version 2.1 as published
+// by the Free Software Foundation, with special exception defined in the file
+// OCCT_LGPL_EXCEPTION.txt. Consult the file LICENSE_LGPL_21.txt included in OCCT
+// distribution for complete text of the license and disclaimer of any warranty.
+//
+// Alternatively, this file may be used under the terms of Open CASCADE
+// commercial license or contractual agreement.
 
 #include <Adaptor3d_CurveOnSurface.hxx>
 #include <BRepAdaptor_Surface.hxx>
@@ -12,6 +22,7 @@
 #include <Geom2d_Line.hxx>
 #include <Geom2d_Circle.hxx>
 #include <Geom2d_BezierCurve.hxx>
+#include <Geom2d_BSplineCurve.hxx>
 #include <Geom2d_TrimmedCurve.hxx>
 #include <Geom2dConvert.hxx>
 #include <Geom2dAdaptor_Curve.hxx>
@@ -209,4 +220,87 @@ TEST(ChFi3d_CollapsedTraceControl, RestrictionExtensionIsExplicit)
     if (isEnlarged)
       EXPECT_NEAR(aParameter2, 1.02, 1.e-7);
   }
+}
+
+TEST(ChFi3d_CollapsedTraceControl, MultipleNearestParametersRemainBoundedContacts)
+{
+  const TopoDS_Face aSupport =
+    BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(), gp_Dir(0, 0, 1)), -2, 2, -2, 2);
+  NCollection_Array1<gp_Pnt2d> aPoles(1, 4);
+  NCollection_Array1<double>   aKnots(1, 4);
+  NCollection_Array1<int>      aMults(1, 4);
+  aPoles(1) = gp_Pnt2d(-1, -1);
+  aPoles(2) = gp_Pnt2d(1, 1);
+  aPoles(3) = gp_Pnt2d(1, -1);
+  aPoles(4) = gp_Pnt2d(-1, 1);
+  for (int i = 1; i <= 4; ++i)
+  {
+    aKnots(i) = i - 1.;
+    aMults(i) = i == 1 || i == 4 ? 2 : 1;
+  }
+  const occ::handle<Geom2d_BSplineCurve> aCurve =
+    new Geom2d_BSplineCurve(aPoles, aKnots, aMults, 1);
+  const auto aPoint                                  = makePointContact(gp_Pnt(0, 0, 5.e-8), 1.e-7);
+  const auto aTrace                                  = makePointContact(gp_Pnt(), 1.e-7);
+  aTrace->ChangeInterference(1).ChangePCurveOnFace() = aCurve;
+  aTrace->ChangeInterference(1).SetFirstParameter(0.);
+  aTrace->ChangeInterference(1).SetLastParameter(3.);
+  for (bool isSwapped : {false, true})
+  {
+    double aParameter1 = 0., aParameter2 = 0.;
+    ASSERT_TRUE(ChFi3d_IntTraces(isSwapped ? aTrace : aPoint,
+                                 0.,
+                                 aParameter1,
+                                 1,
+                                 1,
+                                 isSwapped ? aPoint : aTrace,
+                                 0.,
+                                 aParameter2,
+                                 1,
+                                 1,
+                                 gp_Pnt2d(),
+                                 false,
+                                 false,
+                                 &aSupport));
+    const double aParameter = isSwapped ? aParameter1 : aParameter2;
+    EXPECT_GE(aParameter, 0.);
+    EXPECT_LE(aParameter, 3.);
+    EXPECT_LE(aCurve->Value(aParameter).Distance(gp_Pnt2d()), 1.e-7);
+  }
+}
+
+TEST(ChFi3d_CollapsedTraceControl, MissingSupportAndTraceAreRejected)
+{
+  const auto aPoint      = makePointContact(gp_Pnt(), 1.e-7);
+  double     aParameter1 = 0., aParameter2 = 0.;
+  EXPECT_FALSE(ChFi3d_IntTraces(aPoint,
+                                0.,
+                                aParameter1,
+                                1,
+                                1,
+                                aPoint,
+                                0.,
+                                aParameter2,
+                                1,
+                                1,
+                                gp_Pnt2d(),
+                                false,
+                                false));
+  const TopoDS_Face aSupport =
+    BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(), gp_Dir(0, 0, 1)), -2, 2, -2, 2);
+  aPoint->ChangeInterference(1).ChangePCurveOnSurf().Nullify();
+  EXPECT_FALSE(ChFi3d_IntTraces(aPoint,
+                                0.,
+                                aParameter1,
+                                1,
+                                1,
+                                aPoint,
+                                0.,
+                                aParameter2,
+                                1,
+                                1,
+                                gp_Pnt2d(),
+                                false,
+                                false,
+                                &aSupport));
 }
