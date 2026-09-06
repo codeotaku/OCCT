@@ -201,6 +201,12 @@ protected:
 
   Standard_EXPORT ChFi3d_Builder(const TopoDS_Shape& S, const double Ta);
 
+  //! Original shape used to acquire contours, also when rebuilding an equivalent solution.
+  const TopoDS_Shape& sourceShape() const { return myShape; }
+
+  //! Current angular tolerance, including configuration through the base-class API.
+  double angularTolerance() const { return angular; }
+
   Standard_EXPORT virtual void SimulKPart(const occ::handle<ChFiDS_SurfData>& SD) const = 0;
 
   Standard_EXPORT virtual bool SimulSurf(occ::handle<ChFiDS_SurfData>&           Data,

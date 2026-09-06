@@ -192,24 +192,9 @@ void ExtentSpineOnCommonFace(occ::handle<ChFiDS_Spine>& Spine1,
 //=================================================================================================
 
 ChFi3d_ChBuilder::ChFi3d_ChBuilder(const TopoDS_Shape& S, const double Ta)
-    : ChFi3d_Builder(S, Ta),
-      mySourceShape(S),
-      myAngularTolerance(Ta)
+    : ChFi3d_Builder(S, Ta)
 {
   myMode = ChFiDS_ClassicChamfer;
-}
-
-//=================================================================================================
-
-void ChFi3d_ChBuilder::SetParams(const double Tang,
-                                 const double Tesp,
-                                 const double T2d,
-                                 const double TApp3d,
-                                 const double TolApp2d,
-                                 const double Fleche)
-{
-  myAngularTolerance = Tang;
-  ChFi3d_Builder::SetParams(Tang, Tesp, T2d, TApp3d, TolApp2d, Fleche);
 }
 
 //=================================================================================================
@@ -218,6 +203,7 @@ void ChFi3d_ChBuilder::Compute()
 {
   struct ContourDefinition
   {
+    ChFiDS_ChamfMode                                 Mode;
     ChFiDS_ChamfMethod                               Method;
     TopoDS_Edge                                      Edge;
     TopoDS_Face                                      FirstFace;
@@ -240,7 +226,8 @@ void ChFi3d_ChBuilder::Compute()
       continue;
     }
 
-    ContourDefinition aDefinition = {aSpine->IsChamfer(),
+    ContourDefinition aDefinition = {aSpine->Mode(),
+                                     aSpine->IsChamfer(),
                                      aSpine->Edges(1),
                                      TopoDS_Face(),
                                      TopoDS_Face(),
@@ -262,7 +249,9 @@ void ChFi3d_ChBuilder::Compute()
       aSpine->GetDistAngle(aDefinition.FirstDistance, aDefinition.Angle);
     }
 
-    bool canSwap = aDefinition.Method == ChFiDS_TwoDist;
+    // Constant-throat parameters are not distances assigned to the two support faces.
+    bool canSwap =
+      aDefinition.Mode == ChFiDS_ClassicChamfer && aDefinition.Method == ChFiDS_TwoDist;
     for (int anEdgeIndex = 1; anEdgeIndex <= aSpine->NbEdges(); ++anEdgeIndex)
     {
       const TopoDS_Edge& anEdge = aSpine->Edges(anEdgeIndex);
@@ -339,11 +328,11 @@ void ChFi3d_ChBuilder::Compute()
   }
 
   const auto replayDefinitions = [&](ChFi3d_ChBuilder& theBuilder, const bool theUseAlternate) {
-    theBuilder.SetMode(myMode);
-    theBuilder.SetParams(myAngularTolerance, tolesp, tol2d, tolapp3d, tolapp2d, fleche);
+    theBuilder.SetParams(angularTolerance(), tolesp, tol2d, tolapp3d, tolapp2d, fleche);
     theBuilder.SetContinuity(myConti, tolappangle);
     for (const ContourDefinition& aDefinition : aDefinitions)
     {
+      theBuilder.SetMode(aDefinition.Mode);
       if (aDefinition.Method == ChFiDS_Sym)
       {
         theBuilder.Add(aDefinition.FirstDistance, aDefinition.Edge);
@@ -373,13 +362,14 @@ void ChFi3d_ChBuilder::Compute()
                          aDefinition.FirstFace);
       }
     }
+    theBuilder.SetMode(myMode); // Retain the caller's default for future contours.
   };
 
   if (!hasAlternate)
   {
     if (myUsesAlternateTwoDistOrdering)
     {
-      ChFi3d_ChBuilder aPrimaryBuilder(mySourceShape, myAngularTolerance);
+      ChFi3d_ChBuilder aPrimaryBuilder(sourceShape(), angularTolerance());
       replayDefinitions(aPrimaryBuilder, false);
       if (aPrimaryBuilder.NbElements() == static_cast<int>(aDefinitions.size()))
       {
@@ -393,7 +383,7 @@ void ChFi3d_ChBuilder::Compute()
     return;
   }
 
-  ChFi3d_ChBuilder anAlternateBuilder(mySourceShape, myAngularTolerance);
+  ChFi3d_ChBuilder anAlternateBuilder(sourceShape(), angularTolerance());
   replayDefinitions(anAlternateBuilder, true);
   if (anAlternateBuilder.NbElements() == static_cast<int>(aDefinitions.size()))
   {
@@ -407,7 +397,7 @@ void ChFi3d_ChBuilder::Compute()
     for (const ContourDefinition& aDefinition : aDefinitions)
     {
       ++aContourIndex;
-      if (aDefinition.Method == ChFiDS_TwoDist)
+      if (aDefinition.CanSwap)
       {
         const occ::handle<ChFiDS_ChamfSpine> aSpine =
           occ::down_cast<ChFiDS_ChamfSpine>(Value(aContourIndex));
@@ -430,7 +420,7 @@ void ChFi3d_ChBuilder::Compute()
   // state retained solely for query compatibility.
   if (myUsesAlternateTwoDistOrdering)
   {
-    ChFi3d_ChBuilder aPrimaryBuilder(mySourceShape, myAngularTolerance);
+    ChFi3d_ChBuilder aPrimaryBuilder(sourceShape(), angularTolerance());
     replayDefinitions(aPrimaryBuilder, false);
     aPrimaryBuilder.ChFi3d_Builder::Compute();
     *this = aPrimaryBuilder;
@@ -624,7 +614,8 @@ void ChFi3d_ChBuilder::SetDists(const double       Dis1,
     // An equivalent-order retry keeps the caller's face ordering in myEdgeFirstFace while its
     // internal spine was acquired from the opposite face.  Resolve edits against that preserved
     // public ordering; using the internal acquisition parity would silently swap Dis1 and Dis2.
-    if (myUsesAlternateTwoDistOrdering && csp->IsChamfer() == ChFiDS_TwoDist)
+    if (myUsesAlternateTwoDistOrdering && csp->IsChamfer() == ChFiDS_TwoDist
+        && csp->Mode() == ChFiDS_ClassicChamfer)
     {
       for (int anEdgeIndex = 1; anEdgeIndex <= csp->NbEdges(); ++anEdgeIndex)
       {
