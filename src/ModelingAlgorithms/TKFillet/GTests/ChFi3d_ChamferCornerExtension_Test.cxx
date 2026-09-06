@@ -212,7 +212,7 @@ INSTANTIATE_TEST_SUITE_P(AnglesScalesAndOrientation,
                          testing::Combine(testing::Values(30., 60., 90., 120.),
                                           testing::Values(.1, 1., 10.),
                                           testing::Bool(),
-                                          testing::Values(false)));
+                                          testing::Bool()));
 
 class ChFi3d_ChamferCornerReference : public ChFi3d_ChamferCornerExtension
 {
@@ -252,9 +252,7 @@ TEST_P(ChFi3d_ChamferCornerReference, Build_SwappedReferenceFaces_ProducesEquiva
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(EquivalentSupports,
-                         ChFi3d_ChamferCornerReference,
-                         testing::Combine(testing::Values(60.),
-                                          testing::Values(1.),
-                                          testing::Bool(),
-                                          testing::Values(false)));
+INSTANTIATE_TEST_SUITE_P(
+  EquivalentSupports,
+  ChFi3d_ChamferCornerReference,
+  testing::Combine(testing::Values(60.), testing::Values(1.), testing::Bool(), testing::Bool()));
