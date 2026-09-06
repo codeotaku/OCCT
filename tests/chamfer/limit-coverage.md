@@ -1,9 +1,10 @@
 # Generalized chamfer regression coverage
 
-The issue #1177 stack adds **2,617 registered GTest cases** and two self-contained
+The issue #1177 stack adds **3,079 registered GTest cases** and three self-contained
 DRAW scripts. Parameter combinations are not independent geometric families;
 this is broad contract coverage, not exhaustive surface-pair or branch coverage.
-The unrelated sharp-corner FreeCAD #12240 patch is excluded.
+FreeCAD #12240 is integrated: endpoint handling belongs to the corner stage,
+and its guide/NURBS coverage reuses the B-spline stage's existing smoothing fix.
 
 Configure with `BUILD_GTEST=ON` and build `OpenCascadeGTest`. Sources are registered
 in the existing `TKFillet`, `TKBool`, and `TKGeomAlgo` GTest `FILES.cmake` lists.
@@ -13,9 +14,9 @@ Reconfigure CMake after adding a source to a list.
 
 | Stage | New GTest cases | Responsibility |
 | --- | ---: | --- |
-| Corner construction | 95 | 27 valid-precursor failures, 36 local-recoil predicate cases and 32 surface/mode preservation controls. |
-| Limit topology | 2,070 | Collapsed contacts, consumed restrictions, shared boundaries/pcurves, partial rims, periodic seams, stationary parameterizations, symmetric tolerance and parameter-unit contracts, and invalid over-limit rejection. |
-| B-spline limits | 320 | Guide accuracy, boundary walking and actual-curve verification of polygonal near-tangency. |
+| Corner construction | 145 | 27 valid-precursor failures, 36 local-recoil predicate cases, 32 surface/mode preservation controls and 50 analytic closed-contour cases. |
+| Limit topology | 2,430 | Collapsed contacts, consumed restrictions, shared boundaries/pcurves, partial rims, periodic seams, stationary parameterizations, symmetric tolerance and parameter-unit contracts, invalid over-limit rejection and 360 partial/full lower-contour cases. |
+| B-spline limits | 372 | Guide accuracy, boundary walking and actual-curve verification of polygonal near-tangency; 50 NURBS closed-contour cases and two direct guide-preservation tests. |
 | Oriented chamfer construction | 132 | Walking transitions, independent/connected contours, acute/obtuse sections, reference ordering, per-contour modes, settings, history, editing, reset and recompute. No equivalent-order retry remains. |
 
 ## Test contracts
@@ -25,7 +26,9 @@ Reconfigure CMake after adding a source to a list.
 | `BRepFilletAPI_ChamferMatrix_Test` — base matrix | 32 | Eight surface families and three chamfer modes; transforms, distance sweeps, tapered arm/cylinder contacts and complex corners. Exact BRep/BOP validation, tolerances, material change and containment. These are preservation controls, not all fail-before reproducers. |
 | `CurvedLivingEdges/BRepFilletAPI_ChamferCorner` | 27 | Valid Pocket precursor from FreeCAD #30886; 3 distances × 3 scales × identity/rigid/reflected placement. Explicit support isolates corner construction. Check the cylinder endpoint as well as topology and material removal. |
 | `ChFi3d_CornerRecoil_Test` | 36 | Near-closed circles across the seam, rational B-spline representations and folded B-splines; both endpoints, reversed parameters, rigid placement and three scales. Require local interval membership, accept improved local projections, and retain the recoil for collapsed intervals/corner projections. |
-| `BRepFilletAPI_ChamferLimit_Test` | 955 | Analytic single/opposing and sequential chamfers across below/at/above-limit states, selection/reference orders and placements. Validate shared consumed-boundary topology and reject invalid overshoots. |
+| `BRepFilletAPI_ChamferLimit_Test` | 1,315 | Analytic single/opposing and sequential chamfers across below/at/above-limit states, selection/reference orders and placements. Includes 144 open lower-contour cases, 144 complete-loop cases and 72 bored-support cases. Check whether the exact bottom disk/annulus area must remain or disappear, as well as topology, tolerances and invalid overshoot rejection. |
+| `ChFi3d_ChamferCornerExtension_Test` | 100 | 50 analytic cases in the corner stage and 50 NURBS variants in the B-spline stage. Sharp closed-contour endpoint extension and public chamfer construction across four angles, three scales, reversal and both reference supports; analytical material-removal and equivalent-volume checks. |
+| `ChFi3d_Builder_0_Test` — added guide cases | 2 | Rational tangent joins, periodic seam and exact knot samples, geometric tangency, plus an independent shallow non-rational B-spline guide-deviation oracle. Existing fillet/periodic controls are not counted as additions. |
 | `BRepFilletAPI_ChamferConsumedRim_Test` | 119 | Consumed and partial rims, closed restrictions and adjoining surface reconstruction; validate retained material and connected valid solids. |
 | `BRepFilletAPI_ChamferTangentBoss_Test` | 94 | Valid public tangent-boss precursor and generalized variations; distinguish supported contact from invalid over-limit topology. |
 | `BRepFilletAPI_ChamferAsymmetricLimit_Test` | 108 | Unequal sections, two-distance/non-45-degree distance-angle APIs, both references, below/at/above consumption, rigid/reflected placements. Compare volume and both Boolean differences with an independently extruded polygon. |
@@ -78,6 +81,21 @@ skips are not successful geometry tests. Cross-platform/private-data CI remains
 required before submission. No exhaustive surface Cartesian product, arbitrary
 topology, or MC/DC coverage is claimed.
 
+The lower-contour extension adds 360 cases: 72 fail before the partial-face
+correction and all pass afterward. The complete loop already passed and is
+preservation coverage, not a claimed failing reproducer. Both open and complete
+10 mm operations on the valid supplied BothParallelRails precursor are checked.
+The same open-contour failure was reproduced with the older unsplit kernel;
+it is not established as a regression introduced by the four-stage split.
+Existing all-edge flat-box fillet coverage detects the distinction between
+real surviving arcs and degenerate point traces. The correction uses the existing
+edge-degeneracy classification, not a new length/tolerance heuristic.
+
+The integrated FreeCAD #12240 tests exercise two defects: closed-contour endpoint
+selection and displacement during guide smoothing. Only the endpoint production
+change is newly imported; the existing B-spline-stage smoothing cap is retained.
+Direct guide regressions have failing evidence with smoothing protection reverted.
+
 ## DRAW issue tests
 
 With `TOPTEST` loaded, run:
@@ -85,11 +103,15 @@ With `TOPTEST` loaded, run:
 ```
 test bugs modalg_8 bug1177_box_contact
 test bugs modalg_8 bug1177_opposing_contacts
+test bugs modalg_8 bug_freecad12240_closed_contour
 ```
 
-These use generated cubes, requiring no external data. They test a single
+The first two use generated cubes, requiring no external data. They test a single
 10 mm chamfer and opposing 5 mm chamfers, with validity, topology, volume and
 maximum-tolerance checks.
+The FreeCAD #12240 script generates a NURBS bore with a sharp closed contour and
+checks validity, free boundaries, one solid/shell and analytical removed volume.
+It requires both the corner and guide-preservation stages.
 
 ## Existing facilities and precision
 
