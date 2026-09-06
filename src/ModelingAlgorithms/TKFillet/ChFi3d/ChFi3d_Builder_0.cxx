@@ -28,6 +28,7 @@
 #include <BRepTopAdaptor_TopolTool.hxx>
 #include <BRep_Builder.hxx>
 #include <ChFi3d.hxx>
+#include <ChFiDS_ChamfSpine.hxx>
 #include <ChFiDS_FilSpine.hxx>
 #include <ElCLib.hxx>
 #include <ElSLib.hxx>
@@ -5389,20 +5390,29 @@ Standard_EXPORT void ChFi3d_PerformElSpine(occ::handle<ChFiDS_ElSpine>& HES,
     }
     MultMax = BSpline->Degree() - 2;
   }
+  // Chamfer distances are measured from the guide itself (BlendFunc_Corde).
+  // Smoothing it with a tolerance proportional to its length can move it off
+  // the support intersection and change those distances. Cap each knot-removal
+  // tolerance at the geometric tolerance, even if a curvature jump is retained.
+  const bool   isChamfer      = !occ::down_cast<ChFiDS_ChamfSpine>(Spine).IsNull();
+  const double aLength        = std::abs(WL - WF);
+  const double aCleanupTol    = isChamfer ? std::min(tol, aLength * 1.e-4) : aLength * 1.e-4;
+  const double aSmoothingTol  = isChamfer ? std::min(tol, aLength * 1.e-2) : aLength * 1.e-2;
+  const double aContinuityTol = isChamfer ? std::min(tol, aLength / 10.) : aLength / 10.;
   // correction C2 or C3 (if possible)
-  CurveCleaner(BSpline, std::abs(WL - WF) * 1.e-4, 1);
-  CurveCleaner(BSpline, std::abs(WL - WF) * 1.e-2, MultMax);
+  CurveCleaner(BSpline, aCleanupTol, 1);
+  CurveCleaner(BSpline, aSmoothingTol, MultMax);
   int MultMin = std::max(BSpline->Degree() - 4, 1);
   for (ii = fk; ii <= lk; ii++)
   {
     if (BSpline->Multiplicity(ii) > MultMax)
     {
-      Bof = BSpline->RemoveKnot(ii, MultMax, std::abs(WL - WF) / 10);
+      Bof = BSpline->RemoveKnot(ii, MultMax, aContinuityTol);
     }
     // See C4
     if (BSpline->Multiplicity(ii) > MultMin)
     {
-      Bof = BSpline->RemoveKnot(ii, MultMin, std::abs(WL - WF) * 1.e-4);
+      Bof = BSpline->RemoveKnot(ii, MultMin, aCleanupTol);
     }
   }
   // elspine periodic => BSpline Periodic
@@ -5417,7 +5427,7 @@ Standard_EXPORT void ChFi3d_PerformElSpine(occ::handle<ChFiDS_ElSpine>& HES,
       BSpline->SetPeriodic();
       if (shouldSmoothClosure)
       {
-        BSpline->RemoveKnot(1, MultMax, std::abs(WL - WF) / 10);
+        BSpline->RemoveKnot(1, MultMax, aContinuityTol);
       }
     }
   }

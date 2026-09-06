@@ -1,0 +1,55 @@
+puts "============================================================"
+puts "FreeCAD issue 12240: chamfer extension at a sharp closed contour"
+puts "============================================================"
+# https://github.com/FreeCAD/FreeCAD/issues/12240
+# The bore rim is one tangent contour with coincident first and last vertices.
+# The two ends need different tangents and must both be extended.
+
+pload MODELING
+
+dset halfangle pi/6
+dset arcstart pi/2+halfangle
+dset tipx -10/sin(halfangle)
+dset tangentx 10*cos(arcstart)
+dset tangenty 10*sin(arcstart)
+vertex tip tipx 0 0
+vertex bottom tangentx -tangenty 0
+vertex top tangentx tangenty 0
+edge lower tip bottom
+circle arc 0 0 0 10
+mkedge rounded arc -arcstart arcstart
+edge upper top tip
+wire outline lower rounded upper
+mkplane section outline
+prism tool section 0 0 20
+box block -30 -20 -5 50 40 20
+bcut input block tool
+# Exact rational surfaces expose the insufficient extension during surface walking.
+nurbsconvert input input
+checkshape input
+bopcheck input
+
+# Select the circular top rim geometrically, without depending on edge numbering.
+set rim ""
+foreach anEdge [explode input e] {
+  bounding $anEdge -save xmin ymin zmin xmax ymax zmax
+  if {abs([dval zmin]-15) < 1.e-5 && abs([dval zmax]-15) < 1.e-5 &&
+      [dval xmax]-[dval xmin] > 14.9 && [dval ymax]-[dval ymin] > 19.9} {
+    set rim $anEdge
+    break
+  }
+}
+if {$rim == ""} {
+  error "Error: circular rim not found"
+}
+chamf result input $rim 2
+checkshape result
+bopcheck result
+checknbshapes result -solid 1 -shell 1
+checkfreebounds result 0
+
+# The bore section has area C*r^2 with C = arcstart + cot(halfangle).
+# Integrating its outward offset over the chamfer height gives C*(r*d^2+d^3/3).
+dset factor arcstart+1/tan(halfangle)
+dset expected 40000-15*100*factor-factor*(10*2*2+2*2*2/3)
+checkprops result -v [dval expected] -eps 1.e-9 -deps 1.e-6

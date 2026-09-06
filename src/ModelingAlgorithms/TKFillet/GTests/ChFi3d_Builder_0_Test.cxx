@@ -26,10 +26,12 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <ChFi3d_Builder_0.hxx>
 #include <ChFi3d_FilletShape.hxx>
+#include <ChFiDS_ChamfSpine.hxx>
 #include <ChFiDS_ElSpine.hxx>
 #include <ChFiDS_Spine.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GeomAbs_Shape.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <Geom_BSplineSurface.hxx>
 #include <NCollection_IndexedMap.hxx>
@@ -346,4 +348,139 @@ TEST(BRepFilletAPI_MakeFilletTest, PeriodicSpine_TangentCurvatureJump_DoesNotCre
     EXPECT_EQ(aResultEdges.Extent(), 40) << "Seed edge: " << aSeedIndex + 1;
     EXPECT_EQ(countC0BSplineFaces(aResult), 0) << "Seed edge: " << aSeedIndex + 1;
   }
+}
+
+TEST(ChFi3d_PerformElSpineTest, ChamferGuide_TangentCurvatureJumps_PreservesGeometry)
+{
+  constexpr double aTolerance = 1.e-4;
+  for (const double aScale : {0.1, 1., 1.e4})
+  {
+    for (const bool isPeriodic : {false, true})
+    {
+      SCOPED_TRACE(testing::Message() << "scale=" << aScale << " periodic=" << isPeriodic);
+      occ::handle<ChFiDS_Spine> aSpine  = new ChFiDS_ChamfSpine(aTolerance);
+      const auto                anEdges = makeStadiumEdges(aScale);
+      // The open case ends after the second straight edge; the closed case
+      // also includes the return semicircle and tests the periodic seam.
+      const size_t anEdgeCount = isPeriodic ? 4 : 3;
+      for (size_t anIndex = 0; anIndex < anEdgeCount; ++anIndex)
+      {
+        aSpine->SetEdges(anEdges[anIndex]);
+      }
+      if (isPeriodic)
+      {
+        aSpine->SetFirstStatus(ChFiDS_Closed);
+        aSpine->SetLastStatus(ChFiDS_Closed);
+      }
+      aSpine->Load();
+      occ::handle<ChFiDS_ElSpine> aGuide = new ChFiDS_ElSpine();
+      aGuide->FirstParameter(aSpine->FirstParameter());
+      aGuide->LastParameter(aSpine->LastParameter());
+      aGuide->SetPeriodic(isPeriodic);
+      gp_Pnt aPoint;
+      gp_Vec aTangent;
+      aSpine->D1(aSpine->FirstParameter(), aPoint, aTangent);
+      aGuide->SetFirstPointAndTgt(aPoint, aTangent);
+      aSpine->D1(aSpine->LastParameter(), aPoint, aTangent);
+      aGuide->SetLastPointAndTgt(aPoint, aTangent);
+      ChFi3d_PerformElSpine(aGuide, aSpine, GeomAbs_C1, aTolerance);
+      ASSERT_FALSE(aGuide->BSpline().IsNull());
+      // Knot multiplicity can report C0 for an exact, geometrically tangent
+      // rational join. Check the one-sided tangent directions instead.
+      EXPECT_TRUE(aGuide->BSpline()->IsG1(aGuide->FirstParameter(),
+                                          aGuide->LastParameter(),
+                                          Precision::Angular()));
+      if (isPeriodic)
+      {
+        EXPECT_TRUE(aGuide->BSpline()->IsPeriodic());
+        gp_Pnt    aFirstPoint, aLastPoint;
+        gp_Vec    aFirstTangent, aLastTangent;
+        const int aFirstKnot = aGuide->BSpline()->FirstUKnotIndex();
+        const int aLastKnot  = aGuide->BSpline()->LastUKnotIndex();
+        aGuide->BSpline()->LocalD1(aGuide->FirstParameter(),
+                                   aFirstKnot,
+                                   aFirstKnot + 1,
+                                   aFirstPoint,
+                                   aFirstTangent);
+        aGuide->BSpline()->LocalD1(aGuide->LastParameter(),
+                                   aLastKnot - 1,
+                                   aLastKnot,
+                                   aLastPoint,
+                                   aLastTangent);
+        EXPECT_NEAR(aFirstPoint.Distance(aLastPoint), 0., aTolerance);
+        EXPECT_NEAR(aFirstTangent.Angle(aLastTangent), 0., Precision::Angular());
+      }
+      const auto checkPoint = [&](const double theParam) {
+        const gp_Pnt aP = aGuide->Value(theParam);
+        // Signed distance to the exact stadium: the two horizontal segments
+        // and the semicircles centered at x=0 and x=50*scale.
+        const double aX        = std::clamp(aP.X(), 0., 50. * aScale);
+        const double aDistance = std::hypot(aP.X() - aX, aP.Y()) - 10. * aScale;
+        EXPECT_NEAR(aDistance, 0., aTolerance) << "parameter=" << theParam;
+        EXPECT_NEAR(aP.Z(), 0., Precision::Confusion());
+      };
+      for (int anIndex = 0; anIndex <= 200; ++anIndex)
+      {
+        const double aParam =
+          aGuide->FirstParameter()
+          + (aGuide->LastParameter() - aGuide->FirstParameter()) * anIndex / 200.;
+        checkPoint(aParam);
+      }
+      // Uniform samples alone can miss the joins and the periodic seam.
+      for (int aKnot = 1; aKnot <= aGuide->BSpline()->NbKnots(); ++aKnot)
+      {
+        const double aParam = aGuide->BSpline()->Knot(aKnot);
+        if (aParam >= aGuide->FirstParameter() && aParam <= aGuide->LastParameter())
+        {
+          checkPoint(aParam);
+        }
+      }
+    }
+  }
+}
+
+TEST(ChFi3d_PerformElSpineTest, ChamferGuide_ShallowBSplineFeature_PreservesGeometry)
+{
+  constexpr double aTolerance = 1.e-4;
+  // A C2 edge with a small, intentional feature on a long span. Increasing
+  // its continuity must not flatten the feature beyond the geometric tolerance.
+  NCollection_Array1<gp_Pnt> aPoles(1, 7);
+  const double               anX[] = {0., 100., 300., 500., 700., 900., 1000.};
+  for (int anIndex = 1; anIndex <= 7; ++anIndex)
+  {
+    aPoles(anIndex) = gp_Pnt(anX[anIndex - 1], anIndex == 4 ? .01 : 0., 0.);
+  }
+  NCollection_Array1<double> aKnots(1, 5);
+  NCollection_Array1<int>    aMults(1, 5);
+  for (int anIndex = 1; anIndex <= 5; ++anIndex)
+  {
+    aKnots(anIndex) = .25 * (anIndex - 1);
+    aMults(anIndex) = (anIndex == 1 || anIndex == 5) ? 4 : 1;
+  }
+  occ::handle<Geom_BSplineCurve> aCurve     = new Geom_BSplineCurve(aPoles, aKnots, aMults, 3);
+  occ::handle<ChFiDS_Spine>      aSpine     = new ChFiDS_ChamfSpine(aTolerance);
+  const occ::handle<Geom_Curve>  anOriginal = occ::down_cast<Geom_Curve>(aCurve->Copy());
+  aSpine->SetEdges(BRepBuilderAPI_MakeEdge(aCurve));
+  aSpine->Load();
+  occ::handle<ChFiDS_ElSpine> aGuide = new ChFiDS_ElSpine();
+  aGuide->FirstParameter(aSpine->FirstParameter());
+  aGuide->LastParameter(aSpine->LastParameter());
+  gp_Pnt aPoint;
+  gp_Vec aTangent;
+  aSpine->D1(aSpine->FirstParameter(), aPoint, aTangent);
+  aGuide->SetFirstPointAndTgt(aPoint, aTangent);
+  aSpine->D1(aSpine->LastParameter(), aPoint, aTangent);
+  aGuide->SetLastPointAndTgt(aPoint, aTangent);
+  ChFi3d_PerformElSpine(aGuide, aSpine, GeomAbs_C1, aTolerance);
+  ASSERT_FALSE(aGuide->BSpline().IsNull());
+  double aMaxDistance = 0.;
+  for (int anIndex = 0; anIndex <= 200; ++anIndex)
+  {
+    const double aParam = aGuide->FirstParameter()
+                          + (aGuide->LastParameter() - aGuide->FirstParameter()) * anIndex / 200.;
+    GeomAPI_ProjectPointOnCurve aProjection(aGuide->Value(aParam), anOriginal);
+    ASSERT_GT(aProjection.NbPoints(), 0);
+    aMaxDistance = std::max(aMaxDistance, aProjection.LowerDistance());
+  }
+  EXPECT_LE(aMaxDistance, aTolerance);
 }
