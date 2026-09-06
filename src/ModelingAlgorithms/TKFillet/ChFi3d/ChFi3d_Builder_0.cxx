@@ -51,6 +51,7 @@
 #include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <GeomAPI_ProjectPointOnSurf.hxx>
 #include <ShapeAnalysis_Curve.hxx>
+#include <ShapeAnalysis.hxx>
 #include <TopOpeBRepDS_Point.hxx>
 #include <GeomConvert.hxx>
 #include <GeomConvert_CompCurveToBSplineCurve.hxx>
@@ -4275,19 +4276,15 @@ bool ChFi3d_ComputeCurves(const occ::handle<Adaptor3d_Surface>& S1,
                 gp_Vec2d       aShift(0.0, 0.0);
                 if (aSurfaces[aSurfaceIndex]->IsUPeriodic())
                 {
-                  const double aHalfPeriod = 0.5 * aSurfaces[aSurfaceIndex]->UPeriod();
-                  aShift.SetX(ElCLib::InPeriod(aStart.X(),
-                                               Pardeb(2 * aSurfaceIndex + 1) - aHalfPeriod,
-                                               Pardeb(2 * aSurfaceIndex + 1) + aHalfPeriod)
-                              - aStart.X());
+                  aShift.SetX(ShapeAnalysis::AdjustByPeriod(aStart.X(),
+                                                            Pardeb(2 * aSurfaceIndex + 1),
+                                                            aSurfaces[aSurfaceIndex]->UPeriod()));
                 }
                 if (aSurfaces[aSurfaceIndex]->IsVPeriodic())
                 {
-                  const double aHalfPeriod = 0.5 * aSurfaces[aSurfaceIndex]->VPeriod();
-                  aShift.SetY(ElCLib::InPeriod(aStart.Y(),
-                                               Pardeb(2 * aSurfaceIndex + 2) - aHalfPeriod,
-                                               Pardeb(2 * aSurfaceIndex + 2) + aHalfPeriod)
-                              - aStart.Y());
+                  aShift.SetY(ShapeAnalysis::AdjustByPeriod(aStart.Y(),
+                                                            Pardeb(2 * aSurfaceIndex + 2),
+                                                            aSurfaces[aSurfaceIndex]->VPeriod()));
                 }
                 aPCurves[aSurfaceIndex]->Translate(aShift);
               }
