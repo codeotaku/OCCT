@@ -28,7 +28,8 @@
 #include <tuple>
 #include <cmath>
 
-TEST(Geom2dInt_ClosedTangencyControl, CoincidenceIsRetainedInBothDirections)
+TEST(Geom2dInt_ClosedTangencyControl,
+     Perform_CoincidentClosedCurves_PreservesSegmentsInBothDirections)
 {
   occ::handle<Geom2d_Ellipse> ellipse =
     new Geom2d_Ellipse(gp_Ax2d(gp_Pnt2d(), gp_Dir2d(1, 0)), 30., 24.);
@@ -46,7 +47,7 @@ TEST(Geom2dInt_ClosedTangencyControl, CoincidenceIsRetainedInBothDirections)
   }
 }
 
-TEST(Geom2dInt_ClosedTangencyControl, CrossingAndTangencyAreRetained)
+TEST(Geom2dInt_ClosedTangencyControl, Perform_CrossingAndTangentClosedCurves_PreservesContacts)
 {
   occ::handle<Geom2d_Ellipse> ellipse =
     new Geom2d_Ellipse(gp_Ax2d(gp_Pnt2d(), gp_Dir2d(1, 0)), 30., 24.);
@@ -73,7 +74,7 @@ class Geom2dInt_ClosedTangency : public testing::TestWithParam<std::tuple<double
 {
 };
 
-TEST_P(Geom2dInt_ClosedTangency, SeparatedNormalOffsetsDoNotIntersect)
+TEST_P(Geom2dInt_ClosedTangency, Perform_SeparatedNormalOffsets_ProducesNoIntersections)
 {
   const auto [gap, reversed]                      = GetParam();
   occ::handle<NCollection_HArray1<gp_Pnt>> points = new NCollection_HArray1<gp_Pnt>(1, 13);

@@ -378,7 +378,7 @@ static void checkUniformBSpline(const int    geometry,
   }
 }
 
-TEST_P(BRepFilletAPI_UniformBSpline, ConsumesConstantWidthRim)
+TEST_P(BRepFilletAPI_UniformBSpline, Build_ConstantWidthBSplineRim_ConsumesBoundary)
 {
   const auto [geometry, selection, variant, fraction] = GetParam();
   checkUniformBSpline(geometry, selection, variant, fraction);
@@ -389,7 +389,8 @@ class BRepFilletAPI_UniformBSplineDistanceAngle
 {
 };
 
-TEST_P(BRepFilletAPI_UniformBSplineDistanceAngle, PreservesSectionAcrossSupportReferences)
+TEST_P(BRepFilletAPI_UniformBSplineDistanceAngle,
+       Build_DistanceAngleSupportReferences_PreservesSection)
 {
   const auto [geometry, selection, face, degrees, fraction] = GetParam();
   checkUniformBSpline(geometry,
@@ -422,7 +423,7 @@ class BRepFilletAPI_UniformBSplineGuideSteps
 {
 };
 
-TEST_P(BRepFilletAPI_UniformBSplineGuideSteps, ReducedStepPreservesSectionBranch)
+TEST_P(BRepFilletAPI_UniformBSplineGuideSteps, Guide_ReducedStep_PreservesSectionBranch)
 {
   const auto [face, degrees, variant, representation] = GetParam();
   // Guide-curvature rejection must update the Newton predictor to the smaller step.
@@ -444,7 +445,7 @@ INSTANTIATE_TEST_SUITE_P(AcuteSections,
                                           testing::Values(0, 1, 2),
                                           testing::Values(0, 4)));
 
-TEST_P(BRepFilletAPI_UniformBSplineExplicitFace, BothSupportOrders)
+TEST_P(BRepFilletAPI_UniformBSplineExplicitFace, Build_ExplicitSupportOrders_RespectsGeometricLimit)
 {
   const auto [geometry, selection, face, fraction] = GetParam();
   checkUniformBSpline(geometry, selection, 0, fraction, face);
@@ -462,7 +463,8 @@ class BRepFilletAPI_UniformBSplineRoundTrip
 {
 };
 
-TEST_P(BRepFilletAPI_UniformBSplineRoundTrip, SerializedGeometryRemainsSupported)
+TEST_P(BRepFilletAPI_UniformBSplineRoundTrip,
+       Build_SerializedBSplineGeometry_RespectsGeometricLimit)
 {
   const auto [geometry, selection, fraction] = GetParam();
   checkUniformBSpline(geometry, selection, 0, fraction, 1, true);
@@ -486,7 +488,8 @@ class BRepFilletAPI_UniformBSplineRepresentation
 {
 };
 
-TEST_P(BRepFilletAPI_UniformBSplineRepresentation, EquivalentCurveRepresentationsConsumeSameRim)
+TEST_P(BRepFilletAPI_UniformBSplineRepresentation,
+       Build_EquivalentBSplineRepresentations_ConsumesSameRim)
 {
   const auto [geometry, selection, representation] = GetParam();
   checkUniformBSpline(geometry, selection, 0, 1., 1, false, representation);
@@ -503,7 +506,7 @@ class BRepFilletAPI_UniformBSplineSeam
 {
 };
 
-TEST_P(BRepFilletAPI_UniformBSplineSeam, IndependentSeamsPreserveValidLimitTopology)
+TEST_P(BRepFilletAPI_UniformBSplineSeam, Build_IndependentBSplineSeams_PreservesValidLimitTopology)
 {
   const auto [geometry, selection, origin, variant] = GetParam();
   // Placement also varies reference-face order, with a serialized case.
@@ -522,7 +525,8 @@ class BRepFilletAPI_UniformBSplineSeamNeighbor
 {
 };
 
-TEST_P(BRepFilletAPI_UniformBSplineSeamNeighbor, BelowLimitSucceedsAndAboveLimitIsRejected)
+TEST_P(BRepFilletAPI_UniformBSplineSeamNeighbor,
+       Build_BSplineSeamLimitNeighborhood_RejectsOnlyAboveLimit)
 {
   const auto [geometry, selection, fraction] = GetParam();
   checkUniformBSpline(geometry, selection, 0, fraction, 0, false, 2, 7);
@@ -538,7 +542,7 @@ class ChFi3d_ChamferGuide : public testing::TestWithParam<std::tuple<int, int, i
 {
 };
 
-TEST_P(ChFi3d_ChamferGuide, SeamAndInflectionsDoNotRelaxApproximationBudget)
+TEST_P(ChFi3d_ChamferGuide, Guide_SeamsAndInflections_PreservesApproximationBudget)
 {
   const auto [geometry, origin, variant] = GetParam();
   const auto curve                       = uniformOuterCurve(geometry);

@@ -30,7 +30,7 @@ class BRepFilletAPI_ChamferTolerance
 {
 };
 
-TEST_P(BRepFilletAPI_ChamferTolerance, SharedVerticesDoNotAccumulateTolerancePadding)
+TEST_P(BRepFilletAPI_ChamferTolerance, Build_SharedVertices_DoesNotAccumulateTolerancePadding)
 {
   const auto [edgeCount, scale, tolerance] = GetParam();
   const auto source = BRepPrimAPI_MakeBox(20. * scale, 20. * scale, 2. * scale).Shape();

@@ -35,7 +35,7 @@ class BlendFunc_ChAsymInvJacobian
 {
 };
 
-TEST_P(BlendFunc_ChAsymInvJacobian, MatchesResidualFiniteDifferences)
+TEST_P(BlendFunc_ChAsymInvJacobian, Jacobian_AsymmetricChamfer_MatchesResidualFiniteDifferences)
 {
   const auto [onFirst, curvedFirst, choice, scale, guideKind, rotated] = GetParam();
   const double radius                                                  = 10. * scale;
