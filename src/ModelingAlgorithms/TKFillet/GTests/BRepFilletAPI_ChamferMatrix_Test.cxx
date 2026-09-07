@@ -35,11 +35,13 @@
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeTorus.hxx>
 #include <BRep_Tool.hxx>
+#include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <GeomAPI_PointsToBSpline.hxx>
 #include <Geom_BSplineCurve.hxx>
+#include <Geom2d_Curve.hxx>
 #include <NCollection_Array1.hxx>
 #include <NCollection_IndexedDataMap.hxx>
 #include <NCollection_List.hxx>
@@ -50,6 +52,7 @@
 #include <TopExp_Explorer.hxx>
 #include <TopTools_ShapeMapHasher.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
@@ -60,6 +63,7 @@
 #include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
+#include <gp_Vec2d.hxx>
 
 #include <gtest/gtest.h>
 
@@ -503,24 +507,91 @@ std::string matrixCaseName(const testing::TestParamInfo<MatrixCase>& theInfo)
 {
   return std::string(familyName(theInfo.param.Family)) + "_" + modeName(theInfo.param.Mode);
 }
+
+//=================================================================================================
+
+TopoDS_Shape readCornerShape()
+{
+  const std::string aFile = __FILE__;
+  const std::string aPath =
+    aFile.substr(0, aFile.find_last_of("/\\") + 1) + "data/bug1177_corner.brep";
+  TopoDS_Shape aShape;
+  BRep_Builder aBuilder;
+  if (!BRepTools::Read(aShape, aPath.c_str(), aBuilder))
+  {
+    return {};
+  }
+  return aShape;
+}
 } // namespace
 
 // The valid Pocket precursor of FreeCAD #30886 isolates the chamfer corner;
 // the later, invalid Fillet feature from that document is deliberately not used.
-class BRepFilletAPI_ChamferCorner : public testing::TestWithParam<std::tuple<double, double, int>>
+class BRepFilletAPI_ChamferCorner
+    : public testing::TestWithParam<std::tuple<double, double, int, int, int>>
 {
 };
 
 TEST_P(BRepFilletAPI_ChamferCorner, Build_CurvedLivingEdge_PreservesLocalTermination)
 {
-  const auto [aDistance, aScale, aPlacement] = GetParam();
-  const std::string aFile                    = __FILE__;
-  const std::string aPath =
-    aFile.substr(0, aFile.find_last_of("/\\") + 1) + "data/bug1177_corner.brep";
-  TopoDS_Shape aSource;
+  const auto [aDistance, aScale, aPlacement, aSupport, aPeriods] = GetParam();
+  TopoDS_Shape aSource                                           = readCornerShape();
   BRep_Builder aBuilder;
-  ASSERT_TRUE(BRepTools::Read(aSource, aPath.c_str(), aBuilder));
+  ASSERT_FALSE(aSource.IsNull());
   ASSERT_TRUE(BRepCheck_Analyzer(aSource, true, false, true).IsValid());
+  // Reparameterize periodic faces without changing any 3D geometry. Both seam
+  // p-curves must move together, including domains outside the principal period.
+  if (aPeriods != 0)
+  {
+    std::vector<occ::handle<Geom2d_Curve>> aShiftedCurves;
+    for (TopExp_Explorer aFaceIt(aSource, TopAbs_FACE); aFaceIt.More(); aFaceIt.Next())
+    {
+      const TopoDS_Face         aFace = TopoDS::Face(aFaceIt.Current().Oriented(TopAbs_FORWARD));
+      const BRepAdaptor_Surface aSurface(aFace);
+      if (!aSurface.IsUPeriodic() && !aSurface.IsVPeriodic())
+      {
+        continue;
+      }
+      const gp_Vec2d aShift(aSurface.IsUPeriodic() ? aPeriods * aSurface.UPeriod() : 0.,
+                            aSurface.IsVPeriodic() ? aPeriods * aSurface.VPeriod() : 0.);
+      NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> aFaceEdges;
+      TopExp::MapShapes(aFace, TopAbs_EDGE, aFaceEdges);
+      for (const TopoDS_Shape& anEdgeShape : aFaceEdges)
+      {
+        const TopoDS_Edge aForward = TopoDS::Edge(anEdgeShape.Oriented(TopAbs_FORWARD));
+        double            aFirst = 0., aLast = 0.;
+        const auto        aPCurve = BRep_Tool::CurveOnSurface(aForward, aFace, aFirst, aLast);
+        ASSERT_FALSE(aPCurve.IsNull());
+        // Adjacent faces may share the same surface and edge representation.
+        if (std::find(aShiftedCurves.begin(), aShiftedCurves.end(), aPCurve)
+            != aShiftedCurves.end())
+        {
+          continue;
+        }
+        auto aShifted = occ::down_cast<Geom2d_Curve>(aPCurve->Translated(aShift));
+        aShiftedCurves.push_back(aShifted);
+        if (BRep_Tool::IsClosed(aForward, aFace))
+        {
+          const auto aReverse =
+            BRep_Tool::CurveOnSurface(TopoDS::Edge(aForward.Reversed()), aFace, aFirst, aLast);
+          ASSERT_FALSE(aReverse.IsNull());
+          auto aShiftedReverse = occ::down_cast<Geom2d_Curve>(aReverse->Translated(aShift));
+          aShiftedCurves.push_back(aShiftedReverse);
+          aBuilder.UpdateEdge(aForward,
+                              aShifted,
+                              aShiftedReverse,
+                              aFace,
+                              BRep_Tool::Tolerance(aForward));
+        }
+        else
+        {
+          aBuilder.UpdateEdge(aForward, aShifted, aFace, BRep_Tool::Tolerance(aForward));
+        }
+      }
+      BRepTools::UpdateFaceUVPoints(aFace);
+    }
+    ASSERT_TRUE(BRepCheck_Analyzer(aSource, true, false, true).IsValid());
+  }
   NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> anEdges;
   TopExp::MapShapes(aSource, TopAbs_EDGE, anEdges);
   ASSERT_GE(anEdges.Extent(), 31);
@@ -528,8 +599,9 @@ TEST_P(BRepFilletAPI_ChamferCorner, Build_CurvedLivingEdge_PreservesLocalTermina
   NCollection_IndexedDataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>, TopTools_ShapeMapHasher>
     anEdgeFaces;
   TopExp::MapShapesAndAncestors(aSource, TopAbs_EDGE, TopAbs_FACE, anEdgeFaces);
-  // Use the explicit reference path to test construction, independently of retry policy.
-  const TopoDS_Face aReference = TopoDS::Face(anEdgeFaces.FindFromKey(anEdge).Last());
+  const auto& aSupports = anEdgeFaces.FindFromKey(anEdge);
+  ASSERT_EQ(aSupports.Extent(), 2);
+  const TopoDS_Face aReference = TopoDS::Face(aSupport == 1 ? aSupports.First() : aSupports.Last());
   gp_Trsf           aScaleTransform;
   aScaleTransform.SetScale(gp_Pnt(), aScale);
   gp_Trsf aPlacementTransform;
@@ -547,10 +619,17 @@ TEST_P(BRepFilletAPI_ChamferCorner, Build_CurvedLivingEdge_PreservesLocalTermina
   ASSERT_TRUE(aMoved.IsDone());
   ASSERT_TRUE(BRepCheck_Analyzer(aMoved.Shape(), true, false, true).IsValid());
   BRepFilletAPI_MakeChamfer aChamfer(aMoved.Shape());
-  aChamfer.Add(aDistance * aScale,
-               aDistance * aScale,
-               TopoDS::Edge(aMoved.ModifiedShape(anEdge)),
-               TopoDS::Face(aMoved.ModifiedShape(aReference)));
+  if (aSupport == 0)
+  {
+    aChamfer.Add(aDistance * aScale, TopoDS::Edge(aMoved.ModifiedShape(anEdge)));
+  }
+  else
+  {
+    aChamfer.Add(aDistance * aScale,
+                 aDistance * aScale,
+                 TopoDS::Edge(aMoved.ModifiedShape(anEdge)),
+                 TopoDS::Face(aMoved.ModifiedShape(aReference)));
+  }
   ASSERT_NO_THROW(aChamfer.Build());
   ASSERT_TRUE(aChamfer.IsDone());
   const TopoDS_Shape& aResult = aChamfer.Shape();
@@ -564,23 +643,87 @@ TEST_P(BRepFilletAPI_ChamferCorner, Build_CurvedLivingEdge_PreservesLocalTermina
   }
   EXPECT_LT(maximumTolerance(aResult), 0.05 * aScale);
   expectMaterialRemoved(aResult, aMoved.Shape());
-  const gp_Pnt anExpected       = gp_Pnt(aDistance, -8., -6.).Transformed(aTransform);
-  double       aNearestDistance = RealLast();
-  for (TopExp_Explorer anIt(aResult, TopAbs_VERTEX); anIt.More(); anIt.Next())
+  for (const double aSide : {-1., 1.})
   {
-    aNearestDistance =
-      std::min(aNearestDistance,
-               BRep_Tool::Pnt(TopoDS::Vertex(anIt.Current())).Distance(anExpected));
+    const gp_Pnt anExpected       = gp_Pnt(aDistance, aSide * 8., -6.).Transformed(aTransform);
+    double       aNearestDistance = RealLast();
+    for (TopExp_Explorer anIt(aResult, TopAbs_VERTEX); anIt.More(); anIt.Next())
+    {
+      aNearestDistance =
+        std::min(aNearestDistance,
+                 BRep_Tool::Pnt(TopoDS::Vertex(anIt.Current())).Distance(anExpected));
+    }
+    EXPECT_LE(aNearestDistance, 1.e-5 * aScale)
+      << "both cylinder living edges must align with their adjacent chamfer endpoints";
   }
-  EXPECT_LE(aNearestDistance, 1.e-5 * aScale)
-    << "the cylinder living edge must align with the adjacent chamfer endpoint";
 }
 
 INSTANTIATE_TEST_SUITE_P(CurvedLivingEdges,
                          BRepFilletAPI_ChamferCorner,
                          testing::Combine(testing::Values(0.5, 1.0, 2.0),
                                           testing::Values(0.1, 1.0, 10.0),
-                                          testing::Values(0, 1, 2)));
+                                          testing::Values(0, 1, 2),
+                                          testing::Values(0, 1, 2),
+                                          testing::Values(-2, 0, 2)));
+
+class BRepFilletAPI_ChamferCornerContours : public testing::TestWithParam<std::tuple<int, bool>>
+{
+};
+
+TEST_P(BRepFilletAPI_ChamferCornerContours, Build_IndependentContours_UsesOwnSupportFaces)
+{
+  const auto [aSupport, toReverse] = GetParam();
+  const TopoDS_Shape aSource       = readCornerShape();
+  ASSERT_FALSE(aSource.IsNull());
+  ASSERT_TRUE(BRepCheck_Analyzer(aSource, true, false, true).IsValid());
+  NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> anEdges;
+  TopExp::MapShapes(aSource, TopAbs_EDGE, anEdges);
+  const TopoDS_Edge anEdge = TopoDS::Edge(anEdges(31));
+  gp_Trsf           aTransform;
+  aTransform.SetTranslation(gp_Vec(0., 50., 0.));
+  BRepBuilderAPI_Transform aMoved(aSource, aTransform, true);
+  ASSERT_TRUE(aMoved.IsDone());
+  BRep_Builder    aBuilder;
+  TopoDS_Compound aCompound;
+  aBuilder.MakeCompound(aCompound);
+  aBuilder.Add(aCompound, aSource);
+  aBuilder.Add(aCompound, aMoved.Shape());
+  ASSERT_TRUE(BRepCheck_Analyzer(aCompound, true, false, true).IsValid());
+  NCollection_IndexedDataMap<TopoDS_Shape, NCollection_List<TopoDS_Shape>, TopTools_ShapeMapHasher>
+    anEdgeFaces;
+  TopExp::MapShapesAndAncestors(aCompound, TopAbs_EDGE, TopAbs_FACE, anEdgeFaces);
+  std::array<TopoDS_Edge, 2> aContours = {anEdge, TopoDS::Edge(aMoved.ModifiedShape(anEdge))};
+  if (toReverse)
+  {
+    std::swap(aContours[0], aContours[1]);
+  }
+  BRepFilletAPI_MakeChamfer aChamfer(aCompound);
+  for (const TopoDS_Edge& aContour : aContours)
+  {
+    if (aSupport == 0)
+    {
+      aChamfer.Add(1., aContour);
+    }
+    else
+    {
+      const auto& aFaces = anEdgeFaces.FindFromKey(aContour);
+      aChamfer.Add(1., 1., aContour, TopoDS::Face(aSupport == 1 ? aFaces.First() : aFaces.Last()));
+    }
+  }
+  ASSERT_NO_THROW(aChamfer.Build());
+  ASSERT_TRUE(aChamfer.IsDone());
+  const TopoDS_Shape& aResult = aChamfer.Shape();
+  EXPECT_TRUE(BRepCheck_Analyzer(aResult, true, false, true).IsValid());
+  NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> aSolids;
+  TopExp::MapShapes(aResult, TopAbs_SOLID, aSolids);
+  ASSERT_EQ(aSolids.Extent(), 2);
+  EXPECT_NEAR(shapeVolume(aSolids(1)), shapeVolume(aSolids(2)), shapeVolume(aSource) * 1.e-7);
+  expectMaterialRemoved(aResult, aCompound);
+}
+
+INSTANTIATE_TEST_SUITE_P(IndependentContours,
+                         BRepFilletAPI_ChamferCornerContours,
+                         testing::Combine(testing::Values(0, 1, 2), testing::Bool()));
 
 TEST_P(ChamferSurfaceModeMatrix,
        Build_SurfaceFamiliesAndChamferModes_ProducesClosedValidContainedSolid)
