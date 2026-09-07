@@ -15,6 +15,7 @@
 // commercial license or contractual agreement.
 
 #include <ChFi3d.hxx>
+#include <BRepLib.hxx>
 
 #include <BRep_Tool.hxx>
 #include <ChFi3d_Builder_0.hxx>
@@ -162,9 +163,13 @@ bool ChFi3d::IsTangentFaces(const TopoDS_Edge&  theEdge,
                             const TopoDS_Face&  theFace2,
                             const GeomAbs_Shape theOrder)
 {
-  if (theOrder == GeomAbs_G1 && BRep_Tool::Continuity(theEdge, theFace1, theFace2) != GeomAbs_C0)
+  if (theOrder == GeomAbs_G1)
   {
-    return true;
+    // Without encoded regularity, do not smooth a real corner using the
+    // loose surface-analysis tolerance. Reuse the geometric regularity check.
+    return BRep_Tool::Continuity(theEdge, theFace1, theFace2) != GeomAbs_C0
+           || BRepLib::ContinuityOfFaces(theEdge, theFace1, theFace2, Precision::Angular())
+                != GeomAbs_C0;
   }
 
   double TolC0 = std::max(0.001, 1.5 * BRep_Tool::Tolerance(theEdge));
@@ -265,14 +270,7 @@ bool ChFi3d::IsTangentFaces(const TopoDS_Edge&  theEdge,
       continue;
     }
 
-    if (theOrder == GeomAbs_G1)
-    {
-      if (!aCont.IsG1())
-      {
-        return false;
-      }
-    }
-    else if (!aCont.IsG2())
+    if (!aCont.IsG2())
     {
       return false;
     }
