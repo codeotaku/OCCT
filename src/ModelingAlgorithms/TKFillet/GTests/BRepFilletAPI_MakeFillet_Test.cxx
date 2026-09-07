@@ -68,7 +68,7 @@
 #include <cmath>
 #include <string>
 
-TEST(BRepFilletAPI_MakeFilletTest, BoundaryContinuationIncludesAngularTolerance)
+TEST(BRepFilletAPI_MakeFilletTest, Build_BoundaryContinuation_RespectsAngularTolerance)
 {
   const std::string file = __FILE__;
   const std::string fixture =
@@ -117,7 +117,7 @@ TEST(BRepFilletAPI_MakeFilletTest, BoundaryContinuationIncludesAngularTolerance)
   }
 }
 
-TEST(BRepFilletAPI_MakeFilletTest, SharedTopologyAndParameterizationPreservation)
+TEST(BRepFilletAPI_MakeFilletTest, Build_SharedBoundary_PreservesTopologyAndParameterization)
 {
   struct Case
   {
@@ -169,7 +169,7 @@ TEST(BRepFilletAPI_MakeFilletTest, SharedTopologyAndParameterizationPreservation
   }
 }
 
-TEST(BRepFilletAPI_MakeFilletTest, SlotInCylinderPreservesSharedBoundary)
+TEST(BRepFilletAPI_MakeFilletTest, Build_SlotInCylinder_PreservesSharedBoundary)
 {
   for (double scale : {1., 10.})
   {

@@ -35,7 +35,7 @@ class BRepFilletAPI_ConsumedRim : public ::testing::TestWithParam<std::tuple<int
 {
 };
 
-TEST_P(BRepFilletAPI_ConsumedRim, ValidClosedSolidAtHalfWallThickness)
+TEST_P(BRepFilletAPI_ConsumedRim, Build_HalfWallThickness_ProducesClosedValidSolid)
 {
   const auto [aSelection, aDistance] = GetParam();
   const TopoDS_Shape aSource         = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(12., 10., 4.),
@@ -111,7 +111,7 @@ TEST_P(BRepFilletAPI_ConsumedRim, ValidClosedSolidAtHalfWallThickness)
   }
 }
 
-TEST(BRepFilletAPI_ConsumedRimControl, InteriorCrossingBeyondLimitIsRejected)
+TEST(BRepFilletAPI_ConsumedRimControl, Build_BeyondLimitInteriorCrossing_IsRejected)
 {
   const TopoDS_Shape aSource = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(12., 10., 4.),
                                                BRepPrimAPI_MakeBox(gp_Pnt(1., 1., 1.), 10., 8., 4.))
@@ -142,7 +142,7 @@ class BRepFilletAPI_RimVariants : public ::testing::TestWithParam<std::tuple<int
 {
 };
 
-TEST_P(BRepFilletAPI_RimVariants, LimitContactIsIndependentOfCornerAngleAndPlacement)
+TEST_P(BRepFilletAPI_RimVariants, Build_VariedCornerAnglesAndPlacements_PreservesLimitContact)
 {
   const auto [aSides, aSelection, aScale, aVariant] = GetParam();
   const auto prism = [nSides = aSides](double radius, double z, double height) {

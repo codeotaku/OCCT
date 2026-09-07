@@ -40,7 +40,7 @@ class TopOpeBRepDS_SharedPCurve : public testing::TestWithParam<std::tuple<int, 
 {
 };
 
-TEST_P(TopOpeBRepDS_SharedPCurve, SharedParametersRemainAccurateOnLocatedSupports)
+TEST_P(TopOpeBRepDS_SharedPCurve, PCurve_LocatedSupports_PreservesSharedParameterAccuracy)
 {
   const auto [kind, representation, located, serialized] = GetParam();
   occ::handle<Geom_Surface> surface;

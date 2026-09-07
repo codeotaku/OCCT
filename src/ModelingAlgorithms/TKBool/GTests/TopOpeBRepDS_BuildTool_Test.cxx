@@ -48,7 +48,7 @@ TEST(TopOpeBRepDS_BuildToolTest, CopyReversedPeriodicEdgePreservesRange)
   EXPECT_NEAR(aLast, aCircle->LastParameter(), Precision::PConfusion());
 }
 
-TEST(TopOpeBRepDS_BuildToolTest, SharedCurveKeepsPCurveInSharedEdgeParameters)
+TEST(TopOpeBRepDS_BuildToolTest, PCurve_SharedCurve_UsesSharedEdgeParameters)
 {
   for (int aCase = 0; aCase < 3; ++aCase)
   {

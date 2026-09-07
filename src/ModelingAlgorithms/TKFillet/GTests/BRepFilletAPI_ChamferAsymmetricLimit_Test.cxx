@@ -39,7 +39,8 @@ class BRepFilletAPI_ChamferAsymmetricLimit
 {
 };
 
-TEST_P(BRepFilletAPI_ChamferAsymmetricLimit, AgreesWithIndependentPrismAtFaceConsumption)
+TEST_P(BRepFilletAPI_ChamferAsymmetricLimit,
+       Build_AsymmetricFaceConsumption_AgreesWithIndependentPrism)
 {
   const auto [heightCut, angleAPI, swapped, fraction, placement] = GetParam();
   const TopoDS_Shape source = BRepPrimAPI_MakeBox(10., 30., 6.);

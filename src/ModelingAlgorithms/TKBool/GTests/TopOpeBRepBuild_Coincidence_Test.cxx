@@ -103,7 +103,8 @@ class TopOpeBRepBuild_Coincidence : public testing::TestWithParam<std::tuple<int
 {
 };
 
-TEST(TopOpeBRepBuild_CoincidenceRepresentation, ClosedCurveDoesNotEqualContainedSplineArc)
+TEST(TopOpeBRepBuild_CoincidenceRepresentation,
+     AreCoincidentEdges_ClosedCurveAndContainedSplineArc_ReturnsFalse)
 {
   for (int kind : {1, 2})
   {
@@ -131,7 +132,8 @@ TEST(TopOpeBRepBuild_CoincidenceRepresentation, ClosedCurveDoesNotEqualContained
   }
 }
 
-TEST_P(TopOpeBRepBuild_Coincidence, FullRangeAndDirectionContract)
+TEST_P(TopOpeBRepBuild_Coincidence,
+       AreCoincidentEdges_VariedRangesAndDirections_RespectsCoincidenceContract)
 {
   const auto [kind, relation, placement, swapped] = GetParam();
   const auto       firstCurve                     = makeCurve(kind);
@@ -199,7 +201,8 @@ INSTANTIATE_TEST_SUITE_P(Curves,
                                           testing::Range(0, 3),
                                           testing::Bool()));
 
-TEST(TopOpeBRepBuild_CoincidenceRepresentation, DegreeKnotsAndSeamsPreserveGeometry)
+TEST(TopOpeBRepBuild_CoincidenceRepresentation,
+     AreCoincidentEdges_EquivalentSplineRepresentations_PreservesCoincidence)
 {
   for (int kind = 0; kind < 5; ++kind)
   {
@@ -237,7 +240,8 @@ class TopOpeBRepBuild_StationaryCoincidence
 {
 };
 
-TEST_P(TopOpeBRepBuild_StationaryCoincidence, ValidParameterizationPreservesDirection)
+TEST_P(TopOpeBRepBuild_StationaryCoincidence,
+       AreCoincidentEdges_StationaryParameterization_PreservesDirection)
 {
   const auto [aRepresentation, isCurveReversed, isFirstReversed, isSecondReversed, aPlacement] =
     GetParam();

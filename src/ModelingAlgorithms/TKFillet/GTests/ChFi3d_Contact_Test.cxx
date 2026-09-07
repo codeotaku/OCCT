@@ -26,7 +26,7 @@ class ChFi3d_Contact : public testing::TestWithParam<std::tuple<int, bool, bool>
 {
 };
 
-TEST_P(ChFi3d_Contact, DistinguishesCrossingTangencyAndBoundedEndpoints)
+TEST_P(ChFi3d_Contact, Contact_BoundedCurves_DistinguishesCrossingsTangenciesAndEndpoints)
 {
   const auto [kind, reversed, swapped] = GetParam();
   occ::handle<Geom2d_Curve> first =
@@ -94,7 +94,8 @@ public:
 };
 } // namespace
 
-TEST(ChFi3d_ContactRecords, TransitionDecisionTable)
+TEST(ChFi3d_ContactRecords,
+     HasTransversalIntersection_TransitionCombinations_ClassifiesInteriorCrossings)
 {
   // A transition can be undecided when derivatives do not determine a tangent.
   // Test the predicate's contract independently of how an intersector arrived
@@ -134,7 +135,7 @@ TEST(ChFi3d_ContactRecords, TransitionDecisionTable)
   }
 }
 
-TEST(ChFi3d_ContactRecords, SegmentEndpointDecisionTable)
+TEST(ChFi3d_ContactRecords, HasCommonEndpoint_SegmentRecords_RespectsBoundedEndpoints)
 {
   const occ::handle<Geom2d_Curve> curve = new Geom2d_Line(gp_Pnt2d(), gp_Dir2d(1, 0));
   for (int kind = 0; kind < 8; ++kind)

@@ -140,7 +140,7 @@ class BRepFilletAPI_TangentBoss
 {
 };
 
-TEST_P(BRepFilletAPI_TangentBoss, Chamfer)
+TEST_P(BRepFilletAPI_TangentBoss, Build_TangentBoss_ProducesValidChamfer)
 {
   const auto [aScale, aDistance, aPlacement, isReversed] = GetParam();
   TopoDS_Shape aSource                                   = readUserPrecursor();
@@ -184,7 +184,7 @@ INSTANTIATE_TEST_SUITE_P(InteriorRestriction,
                                             ::testing::Values(0, 1, 2),
                                             ::testing::Bool()));
 
-TEST(BRepFilletAPI_TangentBossVariation, TaperAndTipRadius)
+TEST(BRepFilletAPI_TangentBossVariation, Build_VariedTaperAndTipRadius_ProducesValidChamfer)
 {
   for (const double aTipRadius : {.6, 1., 2.})
   {
@@ -203,7 +203,7 @@ TEST(BRepFilletAPI_TangentBossVariation, TaperAndTipRadius)
   }
 }
 
-TEST(BRepFilletAPI_TangentBossVariation, ChamferAtOneMillimeterTipLimit)
+TEST(BRepFilletAPI_TangentBossVariation, Build_OneMillimeterTipLimit_ProducesValidChamfer)
 {
   const TopoDS_Shape aSource = readUserPrecursor();
   ASSERT_FALSE(aSource.IsNull());
@@ -217,7 +217,7 @@ TEST(BRepFilletAPI_TangentBossVariation, ChamferAtOneMillimeterTipLimit)
   checkResult(aSource, aChamfer.Shape());
 }
 
-TEST(BRepFilletAPI_TangentBossVariation, OrdinaryBoxTerminationUnchanged)
+TEST(BRepFilletAPI_TangentBossVariation, Build_OrdinaryBoxTermination_PreservesGeometry)
 {
   const TopoDS_Shape        aSource = BRepPrimAPI_MakeBox(4., 6., 8.);
   const TopoDS_Edge         anEdge  = TopoDS::Edge(TopExp_Explorer(aSource, TopAbs_EDGE).Current());
@@ -228,7 +228,7 @@ TEST(BRepFilletAPI_TangentBossVariation, OrdinaryBoxTerminationUnchanged)
   checkResult(aSource, aChamfer.Shape());
 }
 
-TEST(BRepFilletAPI_TangentBossVariation, CylinderApexIndependentOfPlaneUVOrigin)
+TEST(BRepFilletAPI_TangentBossVariation, Build_ShiftedPlaneUVOrigin_PreservesCylinderApex)
 {
   // Identical cylinders with different UV origins on the top support plane.
   // At the limit that face is consumed; its apex must be classified at the

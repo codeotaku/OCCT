@@ -52,7 +52,7 @@ class ChFi3d_CollapsedPoints : public testing::TestWithParam<std::tuple<int, boo
 {
 };
 
-TEST_P(ChFi3d_CollapsedPoints, SymmetricContactWithoutRelaxingIndividualCollapse)
+TEST_P(ChFi3d_CollapsedPoints, IntTraces_UnequalCollapseTolerances_PreservesSymmetricContact)
 {
   const auto [aKind, isSwapped, isEndReversed, aScale] = GetParam();
   const double aSmallTolerance                         = 1.e-7 * aScale;
@@ -102,7 +102,7 @@ class ChFi3d_CollapsedTrace : public testing::TestWithParam<std::tuple<int, int,
 {
 };
 
-TEST_P(ChFi3d_CollapsedTrace, ProjectsWithinContactToleranceOnBoundedSupport)
+TEST_P(ChFi3d_CollapsedTrace, IntTraces_BoundedSupport_ProjectsWithinContactTolerance)
 {
   const auto [aSurfaceKind, aCurveKind, isReversed, isSwapped] = GetParam();
   for (double aScale : {.1, 1., 10.})
@@ -190,7 +190,7 @@ INSTANTIATE_TEST_SUITE_P(
   ChFi3d_CollapsedTrace,
   testing::Combine(testing::Range(0, 3), testing::Range(0, 4), testing::Bool(), testing::Bool()));
 
-TEST(ChFi3d_CollapsedTraceControl, RestrictionExtensionIsExplicit)
+TEST(ChFi3d_CollapsedTraceControl, IntTraces_OutsideRestriction_RequiresExplicitExtension)
 {
   const TopoDS_Face aSupport =
     BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(), gp_Dir(0, 0, 1)), -1, 2, -1, 1);
@@ -222,7 +222,7 @@ TEST(ChFi3d_CollapsedTraceControl, RestrictionExtensionIsExplicit)
   }
 }
 
-TEST(ChFi3d_CollapsedTraceControl, MultipleNearestParametersRemainBoundedContacts)
+TEST(ChFi3d_CollapsedTraceControl, IntTraces_MultipleNearestParameters_PreservesBoundedContact)
 {
   const TopoDS_Face aSupport =
     BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(), gp_Dir(0, 0, 1)), -2, 2, -2, 2);
@@ -269,7 +269,7 @@ TEST(ChFi3d_CollapsedTraceControl, MultipleNearestParametersRemainBoundedContact
   }
 }
 
-TEST(ChFi3d_CollapsedTraceControl, MissingSupportAndTraceAreRejected)
+TEST(ChFi3d_CollapsedTraceControl, IntTraces_MissingSupportOrTrace_ReturnsFalse)
 {
   const auto aPoint      = makePointContact(gp_Pnt(), 1.e-7);
   double     aParameter1 = 0., aParameter2 = 0.;

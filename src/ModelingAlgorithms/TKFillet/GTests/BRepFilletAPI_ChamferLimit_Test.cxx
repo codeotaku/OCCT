@@ -142,7 +142,7 @@ class ChamferGeometricLimit : public testing::TestWithParam<std::tuple<int, int,
 };
 } // namespace
 
-TEST_P(ChamferGeometricLimit, ConsumedBoundaryHasSharedTopology)
+TEST_P(ChamferGeometricLimit, Build_ConsumedBoundary_PreservesSharedTopology)
 {
   const auto [aKind, aPlacement, aMode, aScaleIndex, aState] = GetParam();
   const double aScale  = aScaleIndex == 0 ? 1.0 : (aScaleIndex == 1 ? 0.1 : 10.0);
@@ -301,7 +301,7 @@ INSTANTIATE_TEST_SUITE_P(AnalyticLimits,
                                           testing::Range(0, 3)));
 
 // Distinguish an allowed angular endpoint contact from a true crossing.
-TEST(ChamferLimitIntersection, EndpointContactIsNotInteriorCrossing)
+TEST(ChamferLimitIntersection, Intersection_EndpointContact_IsNotInteriorCrossing)
 {
   Geom2dAdaptor_Curve aFirst(new Geom2d_Line(gp_Pnt2d(), gp_Dir2d(1, 0)), 0.0, 10.0);
   for (double anX : {0.0, 5.0, 10.0})
@@ -320,7 +320,7 @@ class ChamferLimitNeighborhood : public testing::TestWithParam<std::tuple<int, i
 {
 };
 
-TEST_P(ChamferLimitNeighborhood, NearExactAndOverLimit)
+TEST_P(ChamferLimitNeighborhood, Build_NearExactAndOverLimit_RespectsGeometricLimit)
 {
   const auto [aKind, aState, isReversed] = GetParam();
   TopoDS_Shape aSource                   = makeLimitSource(aKind);
@@ -380,7 +380,7 @@ class ChamferSequentialLimit
 {
 };
 
-TEST_P(ChamferSequentialLimit, ConsumeLowerContourAfterUpperChamfer)
+TEST_P(ChamferSequentialLimit, Build_SequentialUpperAndLowerChamfers_ConsumesLowerContour)
 {
   const auto [aKind, aState, aScaleIndex, isLocated, isReversed, isCompleteLoop, aSupport] =
     GetParam();

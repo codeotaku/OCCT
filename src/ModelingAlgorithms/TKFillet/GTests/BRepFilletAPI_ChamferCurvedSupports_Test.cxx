@@ -38,7 +38,7 @@ class BRepFilletAPI_ChamferCurvedSupports
 {
 };
 
-TEST_P(BRepFilletAPI_ChamferCurvedSupports, NoPlanarSupportAndReferenceSwapIsEquivalent)
+TEST_P(BRepFilletAPI_ChamferCurvedSupports, Build_SwappedCurvedSupports_ProducesEquivalentSolid)
 {
   const auto [kind, unequal, seamShift] = GetParam();
   const gp_Dir x                        = seamShift ? gp_Dir(0, 1, 0) : gp_Dir(1, 0, 0);

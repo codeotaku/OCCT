@@ -35,7 +35,7 @@ class BRepFilletAPI_ChamferMultiWire : public testing::TestWithParam<std::tuple<
 {
 };
 
-TEST_P(BRepFilletAPI_ChamferMultiWire, ConsumedRimsPreserveUnaffectedMaterial)
+TEST_P(BRepFilletAPI_ChamferMultiWire, Build_MultiWireConsumedRims_PreservesUnaffectedMaterial)
 {
   const auto [holes, distance, placement] = GetParam();
   const double length                     = 1. + 11. * holes;

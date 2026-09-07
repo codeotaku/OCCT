@@ -37,7 +37,8 @@ class TopOpeBRepBuild_ClosedRestriction
 {
 };
 
-TEST_P(TopOpeBRepBuild_ClosedRestriction, KeepsOriginalAndAllGeneratedSeamVertices)
+TEST_P(TopOpeBRepBuild_ClosedRestriction,
+       BuildEdges_ClosedRestrictions_PreservesOriginalAndGeneratedSeamVertices)
 {
   const auto [kind, seams, located, reversed] = GetParam();
   occ::handle<Geom_Curve> curve;

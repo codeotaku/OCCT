@@ -58,7 +58,8 @@ public:
 };
 } // namespace
 
-TEST_P(TopOpeBRepBuild_CompleteCoincidence, CoversBothRangesWithinCallerTolerance)
+TEST_P(TopOpeBRepBuild_CompleteCoincidence,
+       HasCompleteCoincidence_BoundedRanges_RespectsCallerTolerance)
 {
   const auto [kind, relation, reversed, swapped] = GetParam();
   occ::handle<Geom2d_Curve> curve;
@@ -123,7 +124,8 @@ INSTANTIATE_TEST_SUITE_P(
   TopOpeBRepBuild_CompleteCoincidence,
   testing::Combine(testing::Range(0, 3), testing::Range(0, 4), testing::Bool(), testing::Bool()));
 
-TEST(TopOpeBRepBuild_CompleteCoincidenceControl, IncompleteAndAmbiguousRecordsAreRejected)
+TEST(TopOpeBRepBuild_CompleteCoincidenceControl,
+     HasCompleteCoincidence_IncompleteOrAmbiguousRecords_ReturnsFalse)
 {
   const occ::handle<Geom2d_Curve>  curve = new Geom2d_Line(gp_Pnt2d(), gp_Dir2d(1, 0));
   const Geom2dAdaptor_Curve        a(curve, 0., 1.);
@@ -156,7 +158,8 @@ class TopOpeBRepBuild_CoincidenceParameterization
 {
 };
 
-TEST_P(TopOpeBRepBuild_CoincidenceParameterization, CoverageDependsOnGeometryNotParameterScale)
+TEST_P(TopOpeBRepBuild_CoincidenceParameterization,
+       HasCompleteCoincidence_RescaledParameters_PreservesGeometricCoverage)
 {
   const auto [aRange, isNonlinear, aRelation, isReversed, isSwapped] = GetParam();
   for (const double aTolerance : {Precision::PConfusion(), 1.e-7})
@@ -211,7 +214,8 @@ INSTANTIATE_TEST_SUITE_P(GeometricRanges,
                                           testing::Bool(),
                                           testing::Bool()));
 
-TEST(TopOpeBRepBuild_CompleteCoincidenceControl, ActualIntersectionRetainsUnmatchedTail)
+TEST(TopOpeBRepBuild_CompleteCoincidenceControl,
+     HasCompleteCoincidence_UnmatchedIntersectionTail_ReturnsFalse)
 {
   for (double aRange : {1., 1.e-4, 1.e-6, 1.e-7, 1.e-8, 5.e-9})
     for (double aTolerance : {Precision::PConfusion(), 1.e-7})
@@ -239,7 +243,8 @@ TEST(TopOpeBRepBuild_CompleteCoincidenceControl, ActualIntersectionRetainsUnmatc
     }
 }
 
-TEST(TopOpeBRepBuild_CompleteCoincidenceControl, DirectionUsesStoredIntersectionOrientation)
+TEST(TopOpeBRepBuild_CompleteCoincidenceControl,
+     HasCompleteCoincidence_OrientedIntersection_PreservesDirection)
 {
   // A nonzero geometric segment can have a parameter span whose square underflows.
   // Test cached contact records, not the intersector's extreme-parameter behavior.
