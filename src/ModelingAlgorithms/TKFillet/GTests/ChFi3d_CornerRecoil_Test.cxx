@@ -51,7 +51,7 @@ class ChFi3d_CornerRecoil : public testing::TestWithParam<std::tuple<int, bool, 
 {
 };
 
-TEST_P(ChFi3d_CornerRecoil, ProjectionRemainsOnLocalBranch)
+TEST_P(ChFi3d_CornerRecoil, ChooseProjectedRecoil_NearClosedAndFoldedEdges_PreservesLocalBranch)
 {
   const auto [aKind, isReversed, isLast, aScale] = GetParam();
   const occ::handle<Geom_Curve> aCurve           = makeRecoilCurve(aKind);

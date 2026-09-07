@@ -582,7 +582,8 @@ INSTANTIATE_TEST_SUITE_P(CurvedLivingEdges,
                                           testing::Values(0.1, 1.0, 10.0),
                                           testing::Values(0, 1, 2)));
 
-TEST_P(ChamferSurfaceModeMatrix, ProducesClosedValidContainedSolid)
+TEST_P(ChamferSurfaceModeMatrix,
+       Build_SurfaceFamiliesAndChamferModes_ProducesClosedValidContainedSolid)
 {
   const MatrixCase   aCase   = GetParam();
   const TopoDS_Shape anInput = makeFamilyShape(aCase.Family);
@@ -638,7 +639,7 @@ INSTANTIATE_TEST_SUITE_P(
                   MatrixCase{SurfaceFamily::PlaneBSpline, ChamferMode::DistanceAngle}),
   matrixCaseName);
 
-TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricReferenceFaceSwapIsEquivalent)
+TEST(BRepFilletAPI_ChamferMatrixTest, Build_SwappedAsymmetricReferenceFaces_ProducesEquivalentSolid)
 {
   for (const SurfaceFamily aFamily : {SurfaceFamily::PlanePlane,
                                       SurfaceFamily::PlaneCylinder,
@@ -673,7 +674,8 @@ TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricReferenceFaceSwapIsEquivalent)
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, TaperedArmCylinderContactAngleSweepRemainsClosed)
+TEST(BRepFilletAPI_ChamferMatrixTest,
+     Build_TaperedArmCylinderContactAngles_ProducesClosedValidSolid)
 {
   const double aRadius   = 10.0;
   const double aDistance = 0.5;
@@ -730,7 +732,7 @@ TEST(BRepFilletAPI_ChamferMatrixTest, TaperedArmCylinderContactAngleSweepRemains
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, RigidMirrorAndScaleTransformsPreserveValidity)
+TEST(BRepFilletAPI_ChamferMatrixTest, Build_RigidMirrorAndScaleTransforms_PreservesValidity)
 {
   struct TransformCase
   {
@@ -789,7 +791,7 @@ TEST(BRepFilletAPI_ChamferMatrixTest, RigidMirrorAndScaleTransformsPreserveValid
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, EdgeOrientationAndOrderDoNotChangeResultVolume)
+TEST(BRepFilletAPI_ChamferMatrixTest, Build_ReversedEdgeOrientationAndOrder_PreservesVolume)
 {
   const TopoDS_Shape       anInput = BRepPrimAPI_MakeBox(20.0, 18.0, 16.0).Shape();
   std::vector<TopoDS_Edge> anEdges;
@@ -817,7 +819,7 @@ TEST(BRepFilletAPI_ChamferMatrixTest, EdgeOrientationAndOrderDoNotChangeResultVo
               shapeVolume(anInput) * 1.e-8);
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, Scale1eMinus3AnalyticEdgesRemainClosed)
+TEST(BRepFilletAPI_ChamferMatrixTest, Build_AnalyticEdgesAtScale1eMinus3_ProducesClosedValidSolid)
 {
   gp_Trsf aScaleTransform;
   aScaleTransform.SetScale(gp_Pnt(0, 0, 0), 1.0e-3);
@@ -839,7 +841,8 @@ TEST(BRepFilletAPI_ChamferMatrixTest, Scale1eMinus3AnalyticEdgesRemainClosed)
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, ShortEdgesAndThresholdPerturbationsRemainClosed)
+TEST(BRepFilletAPI_ChamferMatrixTest,
+     Build_ShortEdgesAndThresholdPerturbations_ProducesClosedValidSolid)
 {
   for (const double aThickness : {1.0e-3, 1.0e-2, 1.0e-1, 1.0})
   {
@@ -875,7 +878,7 @@ TEST(BRepFilletAPI_ChamferMatrixTest, ShortEdgesAndThresholdPerturbationsRemainC
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, SuccessfulComplexCornerBuildsAreNeverInvalid)
+TEST(BRepFilletAPI_ChamferMatrixTest, Build_ComplexCorners_ProducesValidSolidWhenSuccessful)
 {
   const TopoDS_Shape aBox = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape();
   const TopoDS_Shape aCylinder =
@@ -929,7 +932,7 @@ TEST(BRepFilletAPI_ChamferMatrixTest, SuccessfulComplexCornerBuildsAreNeverInval
   EXPECT_GT(aSuccessCount, 0) << "the complex-corner sweep did not exercise a successful path";
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, SeededTransformAndDistanceSweepRemainsValid)
+TEST(BRepFilletAPI_ChamferMatrixTest, Build_SeededTransformAndDistanceSweep_ProducesValidSolid)
 {
   // A fixed generator makes every failure exactly reproducible while sampling points between the
   // hand-picked matrix values.  Keep the arithmetic local instead of std::uniform_distribution,
