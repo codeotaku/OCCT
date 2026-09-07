@@ -921,7 +921,7 @@ TEST(BRepFilletAPI_ChamferMatrixTest,
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionEveryBoundaryAndReferenceIsValid)
+TEST(BRepFilletAPI_ChamferMatrixTest, Build_AsymmetricPlaneExtrusionBoundaries_ProducesValidSolid)
 {
   const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
   const std::vector<EdgeContext> aContexts =
@@ -948,7 +948,7 @@ TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionEveryBoundaryAndRe
 }
 
 TEST(BRepFilletAPI_ChamferMatrixTest,
-     TwoDistancePlaneExtrusionRatiosAndEdgeOrientationsRemainEquivalent)
+     Build_TwoDistanceExtrusionRatiosAndOrientations_ProducesEquivalentSolid)
 {
   const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
   const std::vector<EdgeContext> aContexts =
@@ -997,7 +997,8 @@ TEST(BRepFilletAPI_ChamferMatrixTest,
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionTransformsRemainEquivalent)
+TEST(BRepFilletAPI_ChamferMatrixTest,
+     Build_TransformedAsymmetricPlaneExtrusion_ProducesEquivalentSolid)
 {
   struct TransformCase
   {
@@ -1060,7 +1061,8 @@ TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionTransformsRemainEq
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionMultipleContoursRemainValid)
+TEST(BRepFilletAPI_ChamferMatrixTest,
+     Build_AsymmetricPlaneExtrusionMultipleContours_ProducesValidSolid)
 {
   const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
   const std::vector<EdgeContext> aContexts =
@@ -1097,7 +1099,7 @@ TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionMultipleContoursRe
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricChamferPreservesMixedContourMethods)
+TEST(BRepFilletAPI_ChamferMatrixTest, Build_AsymmetricMixedContourMethods_PreservesGeometry)
 {
   const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
   const std::vector<EdgeContext> aContexts =
@@ -1192,7 +1194,8 @@ TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricChamferPreservesMixedContourMeth
   }
 }
 
-TEST(BRepFilletAPI_ChamferMatrixTest, AsymmetricPlaneExtrusionPreservesHistoryParametersAndRebuilds)
+TEST(BRepFilletAPI_ChamferMatrixTest,
+     Build_AsymmetricPlaneExtrusion_PreservesHistoryParametersAndRebuilds)
 {
   const TopoDS_Shape             anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
   const std::vector<EdgeContext> aContexts =
@@ -1261,7 +1264,7 @@ class ChFi3d_ChamferConfiguration
 {
 };
 
-TEST_P(ChFi3d_ChamferConfiguration, RetainsModeAndAuthoritativeParametersAcrossEdits)
+TEST_P(ChFi3d_ChamferConfiguration, Configuration_ContourEdits_PreservesModeAndParameters)
 {
   const auto [aDefaultMode, isOpposite, throughBase] = GetParam();
   const TopoDS_Shape anInput = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
@@ -1332,7 +1335,7 @@ class ChFi3d_ChamferIndependentContours
 {
 };
 
-TEST_P(ChFi3d_ChamferIndependentContours, SupportChoicesComposeWithoutRetry)
+TEST_P(ChFi3d_ChamferIndependentContours, Compute_IndependentContourSupports_SucceedsWithoutRetry)
 {
   const auto [aMask, isSecondFirst, aPlacement, isConnected] = GetParam();
   const auto aSource = makeFamilyShape(SurfaceFamily::PlaneExtrusion);
@@ -1436,7 +1439,8 @@ class ChFi3d_ChamferOrientedSection
 {
 };
 
-TEST_P(ChFi3d_ChamferOrientedSection, AcuteAndObtuseSupportsAgreeWithoutRetry)
+TEST_P(ChFi3d_ChamferOrientedSection,
+       Compute_AcuteAndObtuseSupports_ProducesEquivalentSectionsWithoutRetry)
 {
   const auto [aBend, aDistance, isLast] = GetParam();
   const auto anInput                    = makeFamilyShape(SurfaceFamily::PlaneExtrusion, aBend);
@@ -1488,7 +1492,7 @@ class ChFi3d_ChamferMixedModes : public testing::TestWithParam<std::tuple<ChFiDS
 {
 };
 
-TEST_P(ChFi3d_ChamferMixedModes, MixedModesPreserveGeometryAndFutureDefault)
+TEST_P(ChFi3d_ChamferMixedModes, Compute_MixedContourModes_PreservesGeometryAndDefault)
 {
   const ChFiDS_ChamfMode aBoxMode    = std::get<0>(GetParam());
   const bool             isBoxFirst  = std::get<1>(GetParam());
