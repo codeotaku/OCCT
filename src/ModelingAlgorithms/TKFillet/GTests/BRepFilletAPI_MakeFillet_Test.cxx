@@ -163,7 +163,7 @@ static void testTangentBoundaryTrim(const bool theBothEnds)
 
 //==================================================================================================
 
-TEST(BRepFilletAPI_MakeFilletTest, FreeCAD29476_TangentBoundaryTrim)
+TEST(BRepFilletAPI_MakeFilletTest, TangentBoundaryTrim_OneEnd_ProducesValidShape)
 {
   testTangentBoundaryTrim(false);
 }
@@ -172,7 +172,7 @@ TEST(BRepFilletAPI_MakeFilletTest, FreeCAD29476_TangentBoundaryTrim)
 
 // The long side edge ends tangentially at a cylinder at each end of the box.
 // A single fillet must trim both existing boundaries without overlapping edges.
-TEST(BRepFilletAPI_MakeFilletTest, FreeCAD29476_TangentBoundaryTrimBothEnds)
+TEST(BRepFilletAPI_MakeFilletTest, TangentBoundaryTrim_BothEnds_ProducesValidShape)
 {
   testTangentBoundaryTrim(true);
 }
