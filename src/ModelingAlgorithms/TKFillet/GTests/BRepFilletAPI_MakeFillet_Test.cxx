@@ -77,8 +77,8 @@ static void testTangentBoundaryTrim(const bool theBothEnds)
     SCOPED_TRACE(isReversed);
     const gp_Dir        aDirection(0, 0, isReversed ? -1 : 1);
     const gp_Ax2        aBoxAxes(gp_Pnt(-60, isReversed ? 25 : -25, isReversed ? 12 : 0),
-                                 aDirection,
-                                 gp_Dir(1, 0, 0));
+                          aDirection,
+                          gp_Dir(1, 0, 0));
     BRepPrimAPI_MakeBox aBoxMaker(aBoxAxes, 120, 50, 12);
     aBoxMaker.Build();
     ASSERT_TRUE(aBoxMaker.IsDone());
