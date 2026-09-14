@@ -65,35 +65,51 @@
 #include <algorithm>
 #include <cmath>
 
+//==================================================================================================
+
 // A fillet ending where a planar side is tangent to a cylinder must trim their
 // existing common edge. Appending an overlapping edge leaves self-intersecting
 // wires even though the fillet builder reports success (FreeCAD issue #29476).
-TEST(BRepFilletAPI_MakeFilletTest, FreeCAD29476_TangentBoundaryTrim)
+static void testTangentBoundaryTrim(const bool theBothEnds)
 {
   for (const bool isReversed : {false, true})
   {
     SCOPED_TRACE(isReversed);
-    const gp_Ax2       aBoxAxes = isReversed
-                                    ? gp_Ax2(gp_Pnt(-60, 25, 12), gp_Dir(0, 0, -1), gp_Dir(1, 0, 0))
-                                    : gp_Ax2(gp_Pnt(-60, -25, 0), gp_Dir(0, 0, 1), gp_Dir(1, 0, 0));
-    const gp_Ax2       aCylinderAxes(gp_Pnt(-60, 0, isReversed ? 32 : 0),
-                                     gp_Dir(0, 0, isReversed ? -1 : 1));
-    const TopoDS_Shape aBox      = BRepPrimAPI_MakeBox(aBoxAxes, 120, 50, 12).Shape();
-    const TopoDS_Shape aCylinder = BRepPrimAPI_MakeCylinder(aCylinderAxes, 25, 32).Shape();
-    BRepAlgoAPI_Fuse   aFuse(aBox, aCylinder);
-    ASSERT_TRUE(aFuse.IsDone());
-    ShapeUpgrade_UnifySameDomain anUnify(aFuse.Shape(), true, true, true);
+    const gp_Dir        aDirection(0, 0, isReversed ? -1 : 1);
+    const gp_Ax2        aBoxAxes(gp_Pnt(-60, isReversed ? 25 : -25, isReversed ? 12 : 0),
+                                 aDirection,
+                                 gp_Dir(1, 0, 0));
+    BRepPrimAPI_MakeBox aBoxMaker(aBoxAxes, 120, 50, 12);
+    aBoxMaker.Build();
+    ASSERT_TRUE(aBoxMaker.IsDone());
+    TopoDS_Shape aFused = aBoxMaker.Shape();
+
+    const double aCylinderZ   = isReversed ? 32.0 : 0.0;
+    const int    aNbCylinders = theBothEnds ? 2 : 1;
+    for (int i = 0; i < aNbCylinders; ++i)
+    {
+      const gp_Ax2             anAxes(gp_Pnt(i == 0 ? -60.0 : 60.0, 0, aCylinderZ), aDirection);
+      BRepPrimAPI_MakeCylinder aCylinderMaker(anAxes, 25, 32);
+      aCylinderMaker.Build();
+      ASSERT_TRUE(aCylinderMaker.IsDone());
+      BRepAlgoAPI_Fuse aFuse(aFused, aCylinderMaker.Shape());
+      ASSERT_TRUE(aFuse.IsDone());
+      aFused = aFuse.Shape();
+    }
+    ShapeUpgrade_UnifySameDomain anUnify(aFused, true, true, true);
     anUnify.Build();
     const TopoDS_Shape& aBase = anUnify.Shape();
     ASSERT_TRUE(BRepCheck_Analyzer(aBase).IsValid());
+    GProp_GProps aBefore;
+    BRepGProp::VolumeProperties(aBase, aBefore);
 
     NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> anEdges;
     TopExp::MapShapes(aBase, TopAbs_EDGE, anEdges);
     int aSelected = 0;
-    for (int i = 1; i <= anEdges.Extent(); ++i)
+    for (const TopoDS_Shape& aShape : anEdges)
     {
-      const TopoDS_Edge anEdge = TopoDS::Edge(anEdges(i));
-      GProp_GProps      aLength;
+      const TopoDS_Edge& anEdge = TopoDS::Edge(aShape);
+      GProp_GProps       aLength;
       BRepGProp::LinearProperties(anEdge, aLength);
       const gp_Pnt aCenter = aLength.CentreOfMass();
       if (std::abs(aLength.Mass() - 120) > 1.e-7 || std::abs(aCenter.Z() - 12) > 1.e-7
@@ -111,13 +127,13 @@ TEST(BRepFilletAPI_MakeFilletTest, FreeCAD29476_TangentBoundaryTrim)
         ASSERT_NO_THROW(aFillet.Build());
         ASSERT_TRUE(aFillet.IsDone());
         const TopoDS_Shape& aResult = aFillet.Shape();
-        EXPECT_TRUE(BRepCheck_Analyzer(aResult).IsValid());
+        EXPECT_TRUE(BRepCheck_Analyzer(aResult).IsValid())
+          << "Fillet must trim the tangent boundary without creating self-intersecting wires";
 
         NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> aSolids;
         TopExp::MapShapes(aResult, TopAbs_SOLID, aSolids);
         EXPECT_EQ(aSolids.Extent(), 1);
-        GProp_GProps aBefore, anAfter;
-        BRepGProp::VolumeProperties(aBase, aBefore);
+        GProp_GProps anAfter;
         BRepGProp::VolumeProperties(aResult, anAfter);
         EXPECT_GT(anAfter.Mass(), 0.0);
         EXPECT_LT(anAfter.Mass(), aBefore.Mass());
@@ -143,6 +159,22 @@ TEST(BRepFilletAPI_MakeFilletTest, FreeCAD29476_TangentBoundaryTrim)
     }
     EXPECT_EQ(aSelected, 2);
   }
+}
+
+//==================================================================================================
+
+TEST(BRepFilletAPI_MakeFilletTest, FreeCAD29476_TangentBoundaryTrim)
+{
+  testTangentBoundaryTrim(false);
+}
+
+//==================================================================================================
+
+// The long side edge ends tangentially at a cylinder at each end of the box.
+// A single fillet must trim both existing boundaries without overlapping edges.
+TEST(BRepFilletAPI_MakeFilletTest, FreeCAD29476_TangentBoundaryTrimBothEnds)
+{
+  testTangentBoundaryTrim(true);
 }
 
 // Regression for fillets that must remove an intervening face or meet on opposite
