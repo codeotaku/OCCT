@@ -27,11 +27,77 @@
 #include <gp_Vec2d.hxx>
 #include <math_Vector.hxx>
 #include <BSplCLib.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <cmath>
 
 #include <StdFail_NotDone.hxx>
 #include <AppParCurves_ConstraintCouple.hxx>
 #include <NCollection_HArray1.hxx>
 #include <AppDef_Variational.hxx>
+
+// Refine homogeneous polynomial curves together before dividing by the weights.
+// Knot insertion preserves geometry; it cannot repair a nonpositive denominator.
+static bool positiveWeights(AppParCurves_MultiBSpCurve& theCurve,
+                            const int                   theNbPoles,
+                            const int                   theNbPoles2d)
+{
+  for (int aStep = 0; aStep <= 8; ++aStep)
+  {
+    bool isPositive = true;
+    for (int v = 1; v <= theCurve.NbPoles(); ++v)
+    {
+      const auto& aPole = theCurve.AppParCurves_MultiCurve::Value(v);
+      for (int u = 1; u <= theNbPoles; ++u)
+      {
+        const auto&  p = aPole.Point(u);
+        const double w = aPole.Point2d(theNbPoles + theNbPoles2d + u).X();
+        if (!std::isfinite(w) || !std::isfinite(p.X()) || !std::isfinite(p.Y())
+            || !std::isfinite(p.Z()))
+          return false;
+        isPositive = isPositive && w > gp::Resolution();
+      }
+    }
+    if (isPositive)
+      return true;
+    if (aStep == 8)
+      return false;
+    const auto&                aKnots = theCurve.Knots();
+    NCollection_Array1<double> anInsert(1, aKnots.Length() - 1);
+    NCollection_Array1<int>    aMults(1, anInsert.Length());
+    aMults.Init(1);
+    for (int k = 1; k <= anInsert.Length(); ++k)
+      anInsert(k) = 0.5 * (aKnots(k) + aKnots(k + 1));
+    NCollection_Array1<AppParCurves_MultiPoint> aNewPoles;
+    NCollection_Array1<gp_Pnt>                  aPoles(1, theCurve.NbPoles());
+    const int                                   aNbCurves = theCurve.NbCurves();
+    for (int c = 1; c <= aNbCurves; ++c)
+    {
+      for (int v = 1; v <= aPoles.Length(); ++v)
+      {
+        const auto& p = theCurve.AppParCurves_MultiCurve::Value(v);
+        aPoles(v) = c <= theNbPoles ? p.Point(c) : gp_Pnt(p.Point2d(c).X(), p.Point2d(c).Y(), 0);
+      }
+      Geom_BSplineCurve aCurve(aPoles, aKnots, theCurve.Multiplicities(), theCurve.Degree());
+      aCurve.InsertKnots(anInsert, aMults, Precision::PConfusion(), false);
+      if (aCurve.NbPoles() <= aPoles.Length())
+        return false;
+      if (c == 1)
+      {
+        aNewPoles.Resize(1, aCurve.NbPoles(), false);
+        for (auto& p : aNewPoles)
+          p = AppParCurves_MultiPoint(theNbPoles, theNbPoles + theNbPoles2d);
+      }
+      for (int v = 1; v <= aCurve.NbPoles(); ++v)
+        if (c <= theNbPoles)
+          aNewPoles(v).SetPoint(c, aCurve.Pole(v));
+        else
+          aNewPoles(v).SetPoint2d(c, gp_Pnt2d(aCurve.Pole(v).X(), aCurve.Pole(v).Y()));
+      if (c == aNbCurves)
+        theCurve = AppParCurves_MultiBSpCurve(aNewPoles, aCurve.Knots(), aCurve.Multiplicities());
+    }
+  }
+  return false;
+}
 
 //  modified by EAP (Edward AGAPOV) Fri Jan 4 2002, bug OCC9
 //  --- keep pipe parametrized like path
@@ -526,6 +592,9 @@ void AppBlend_AppSurf::InternalPerform(const occ::handle<TheLine>& Lin,
       multC        = Variation.Value();
     }
   }
+
+  if (!positiveWeights(multC, NbUPoles, NbPoles2d))
+    return;
 
   vdeg     = multC.Degree();
   NbVPoles = multC.NbPoles();
